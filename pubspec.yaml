@@ -88,7 +88,7 @@ flutter_launcher_icons:
   adaptive_icon_monochrome: "assets/logo.png"
 
   # ─── iOS / Web / macOS / Linux (deshabilitados)
-  ios: false
+  ios: true
   web:
     generate: false
   macos:
