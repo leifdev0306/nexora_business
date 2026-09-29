@@ -6,7 +6,7 @@ on:
 jobs:
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-latest
+    runs-on: macos-14  # macOS 14 no tiene el bug de validación de certificados de macOS 15
     timeout-minutes: 60
 
     steps:
@@ -22,27 +22,35 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
-      - name: Forzar plataforma iOS y deshabilitar firma en Podfile
+      - name: Compilar sin firmar (primer intento para regenerar archivos)
+        run: flutter build ios --release --no-codesign || true
+
+      - name: Parchear Podfile para deshabilitar firma en resource bundles
         run: |
           cd ios
-          # 1. Elimina cualquier línea 'platform :ios' e inserta la versión 15.0
-          sed -i '' '/platform :ios/d' Podfile
-          sed -i '' "1i\\
-          platform :ios, '15.0'
-          " Podfile
-          # 2. Inserta banderas de no-firma en todos los targets de Pods
+          # Reemplaza el bloque post_install estándar por uno que también deshabilite
+          # la firma en los resource bundles (origen del error "Development Team")
           ruby -i -pe '
             if $_ =~ /post_install do \|installer\|/
-              $_ << "\n  installer.pods_project.targets.each do |target|\n    target.build_configurations.each do |config|\n      config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_IDENTITY\"] = \"\"\n    end\n  end\n"
+              $_ = "post_install do |installer|\n"
+              $_ << "  installer.pods_project.targets.each do |target|\n"
+              $_ << "    flutter_additional_ios_build_settings(target) if defined?(flutter_additional_ios_build_settings)\n"
+              $_ << "    target.build_configurations.each do |config|\n"
+              $_ << "      config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n"
+              $_ << "      config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n"
+              $_ << "      config.build_settings[\"CODE_SIGN_IDENTITY\"] = \"\"\n"
+              $_ << "      config.build_settings[\"DEVELOPMENT_TEAM\"] = \"\"\n"
+              $_ << "      config.build_settings[\"PROVISIONING_PROFILE_SPECIFIER\"] = \"\"\n"
+              $_ << "    end\n"
+              $_ << "  end\n"
             end
           ' Podfile
           echo "----- Podfile después de la modificación -----"
-          head -15 Podfile
+          tail -25 Podfile
 
       - name: Limpiar configuración de firma del proyecto Xcode
         run: |
           cd ios
-          # Elimina todas las referencias a firma en el proyecto principal
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
@@ -50,13 +58,13 @@ jobs:
           echo "----- Verificando limpieza -----"
           grep -n "DEVELOPMENT_TEAM" Runner.xcodeproj/project.pbxproj || echo "No se encontraron referencias a DEVELOPMENT_TEAM"
 
-      - name: Limpiar Pods e instalar de nuevo
+      - name: Reinstalar Pods con la nueva configuración
         run: |
           cd ios
           rm -rf Pods Podfile.lock .symlinks
           pod install --repo-update
 
-      - name: Compilar sin firmar
+      - name: Compilar sin firmar (intento final)
         run: flutter build ios --release --no-codesign
 
       - name: Empaquetar como IPA
