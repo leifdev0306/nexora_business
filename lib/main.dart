@@ -11,12 +11,12 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
-import 'package:tu_mipyme/Screens/mi_tienda_screen.dart'
+import 'Screens/mi_tienda_screen.dart'
     show keyTiendaDeEmpresa, MiTiendaScreen;
-import 'package:tu_mipyme/Screens/productos_publicados_screen.dart';
-import 'package:tu_mipyme/Screens/publicar_producto_screen.dart';
-import 'package:tu_mipyme/Screens/tiendas_screen.dart';
-import 'package:tu_mipyme/Screens/vista_tienda_screen.dart';
+import 'Screens/productos_publicados_screen.dart';
+import 'Screens/publicar_producto_screen.dart';
+import 'Screens/tiendas_screen.dart';
+import 'Screens/vista_tienda_screen.dart';
 import 'package:uuid/uuid.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:collection/collection.dart';
