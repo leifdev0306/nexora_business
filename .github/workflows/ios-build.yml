@@ -22,16 +22,14 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
-      # 1. Genera el Podfile sin compilar (con --no-codesign para evitar el error de certificados)
-      - name: Generar configuración iOS (Podfile)
+      # 1. Genera solo la configuración (Podfile, Generated.xcconfig) sin compilar
+      - name: Generar configuración iOS
         run: flutter build ios --config-only --no-codesign
 
-      # 2. Modifica el Podfile: plataforma iOS y deshabilitar firma
+      # 2. Parchea el Podfile: plataforma iOS y deshabilitar firma en todos los targets
       - name: Parchear Podfile
         run: |
           cd ios
-
-          # --- Asegurar plataforma iOS 15.0 ---
           if grep -q "^[[:space:]]*platform :ios" Podfile; then
             sed -i '' "s/^[[:space:]]*platform :ios.*/platform :ios, '15.0'/" Podfile
           else
@@ -40,35 +38,27 @@ jobs:
             " Podfile
           fi
 
-          # --- Deshabilitar firma en todos los targets de Pods ---
           ruby -i -pe '
             if $_ =~ /post_install do \|installer\|/
               $_ = "post_install do |installer|\n"
               $_ << "  installer.pods_project.targets.each do |target|\n"
               $_ << "    flutter_additional_ios_build_settings(target) if defined?(flutter_additional_ios_build_settings)\n"
               $_ << "    target.build_configurations.each do |config|\n"
-              $_ << "      if config.build_settings[\"WRAPPER_EXTENSION\"] == \"bundle\"\n"
-              $_ << "        config.build_settings[\"DEVELOPMENT_TEAM\"] = \"\"\n"
-              $_ << "        config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n"
-              $_ << "        config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n"
-              $_ << "      else\n"
-              $_ << "        config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n"
-              $_ << "        config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n"
-              $_ << "        config.build_settings[\"CODE_SIGN_IDENTITY\"] = \"\"\n"
-              $_ << "        config.build_settings[\"DEVELOPMENT_TEAM\"] = \"\"\n"
-              $_ << "        config.build_settings[\"PROVISIONING_PROFILE_SPECIFIER\"] = \"\"\n"
-              $_ << "      end\n"
+              $_ << "      config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n"
+              $_ << "      config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n"
+              $_ << "      config.build_settings[\"CODE_SIGN_IDENTITY\"] = \"\"\n"
+              $_ << "      config.build_settings[\"DEVELOPMENT_TEAM\"] = \"\"\n"
+              $_ << "      config.build_settings[\"PROVISIONING_PROFILE_SPECIFIER\"] = \"\"\n"
               $_ << "    end\n"
               $_ << "  end\n"
             end
           ' Podfile
 
-          echo "----- Podfile después de la modificación -----"
+          echo "----- Podfile (primeras 5 líneas) -----"
           head -5 Podfile
-          tail -25 Podfile
 
-      # 3. Limpiar referencias de firma en el proyecto Xcode
-      - name: Limpiar DEVELOPMENT_TEAM en el proyecto Xcode
+      # 3. Limpia cualquier referencia de firma en el proyecto Xcode generado
+      - name: Limpiar project.pbxproj
         run: |
           cd ios
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
@@ -76,25 +66,34 @@ jobs:
           sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
 
-      # 4. Hacer el Podfile de solo lectura para que Flutter no lo sobrescriba
-      - name: Hacer Podfile inmutable
-        run: chmod 444 ios/Podfile
-
-      # 5. Limpiar Pods antiguos e instalar con el Podfile ya fijado
+      # 4. Fija el Podfile y reinstala Pods con la configuración sin firma
       - name: Reinstalar Pods
         run: |
           cd ios
+          chmod 444 Podfile
           rm -rf Pods Podfile.lock .symlinks
           pod install --repo-update
 
-      # 6. Compilar finalmente sin firma
-      - name: Compilar sin firmar
-        run: flutter build ios --release --no-codesign
+      # 5. Compila con xcodebuild directamente, forzando la no-firma en la línea de comandos
+      - name: Compilar con xcodebuild (sin firma)
+        run: |
+          xcodebuild \
+            -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            clean build
 
+      # 6. Empaqueta el .app resultante como IPA sin firmar
       - name: Empaquetar como IPA
         run: |
           mkdir Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/
+          cp -R build/ios/Build/Products/Release-iphoneos/Runner.app Payload/
           zip -qq -r -9 FlutterIpaExport.ipa Payload
 
       - name: Subir IPA como artefacto
