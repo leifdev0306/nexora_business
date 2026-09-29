@@ -22,10 +22,25 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
-      - name: Parchear Podfile para resource bundles
+      # 1. Genera el Podfile sin compilar (--config-only)
+      - name: Generar configuración iOS (Podfile)
+        run: flutter build ios --config-only
+
+      # 2. Modifica el Podfile: plataforma iOS y deshabilitar firma
+      - name: Parchear Podfile
         run: |
           cd ios
-          # Reemplaza el bloque post_install estándar por uno que gestione los resource bundles
+
+          # --- Asegurar plataforma iOS 15.0 ---
+          if grep -q "^[[:space:]]*platform :ios" Podfile; then
+            sed -i '' "s/^[[:space:]]*platform :ios.*/platform :ios, '15.0'/" Podfile
+          else
+            sed -i '' "1i\\
+            platform :ios, '15.0'
+            " Podfile
+          fi
+
+          # --- Deshabilitar firma en todos los targets de Pods ---
           ruby -i -pe '
             if $_ =~ /post_install do \|installer\|/
               $_ = "post_install do |installer|\n"
@@ -47,23 +62,23 @@ jobs:
               $_ << "  end\n"
             end
           ' Podfile
+
           echo "----- Podfile después de la modificación -----"
-          tail -30 Podfile
+          head -5 Podfile
+          tail -25 Podfile
 
-      - name: Limpiar configuración de firma del proyecto Xcode
-        run: |
-          cd ios
-          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
+      # 3. Hacer el Podfile de solo lectura para que Flutter no lo sobrescriba
+      - name: Hacer Podfile inmutable
+        run: chmod 444 ios/Podfile
 
-      - name: Reinstalar Pods con la nueva configuración
+      # 4. Limpiar Pods antiguos e instalar con el Podfile ya fijado
+      - name: Reinstalar Pods
         run: |
           cd ios
           rm -rf Pods Podfile.lock .symlinks
           pod install --repo-update
 
+      # 5. Compilar finalmente sin firma
       - name: Compilar sin firmar
         run: flutter build ios --release --no-codesign
 
