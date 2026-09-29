@@ -1,0 +1,15 @@
+En main.dart ya se añadieron los imports y rutas del módulo.
+
+Para /tienda-detalle, la ruta debe recibir un TiendaPublica:
+  final tienda = settings.arguments as TiendaPublica;
+  return MaterialPageRoute(
+    builder: (_) => TiendaDetalleScreen(tienda: tienda),
+  );
+
+Si tu main.dart modificado actualmente tiene:
+  final tienda = settings.arguments;
+cámbialo por el bloque anterior y agrega:
+  import 'models/tienda_publica.dart';
+
+No se requiere ninguna dependencia nueva: el módulo utiliza supabase_flutter,
+provider y url_launcher, que ya aparecen en tu proyecto actual.

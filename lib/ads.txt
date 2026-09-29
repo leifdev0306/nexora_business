@@ -1,0 +1,3 @@
+const String supabaseUrl = 'https://nhrnbzxdolbvebsalpew.supabase.co';
+const String supabaseAnonKey =
+    'sb_publishable_EGsAViLt30wUPPoimThlsw_TNwlVaXf';
