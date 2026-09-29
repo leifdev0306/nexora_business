@@ -22,6 +22,19 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
+      - name: Establecer plataforma iOS en el Podfile
+        run: |
+          cd ios
+          # Asegura que la línea 'platform :ios' tenga la versión 15.0
+          if grep -q "platform :ios" Podfile; then
+            sed -i '' "s/platform :ios, '[^']*'/platform :ios, '15.0'/" Podfile
+          else
+            # Si no existe, la añade al principio del archivo
+            sed -i '' "1i\\
+            platform :ios, '15.0'
+            " Podfile
+          fi
+
       - name: Parchear Podfile para deshabilitar firma
         run: |
           cd ios
@@ -39,9 +52,10 @@ jobs:
           sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
 
-      - name: Ejecutar pod install
+      - name: Limpiar Pods e instalar de nuevo
         run: |
           cd ios
+          rm -rf Pods Podfile.lock
           pod install --repo-update
 
       - name: Compilar sin firmar
