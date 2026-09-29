@@ -6,7 +6,7 @@ on:
 jobs:
   build-ios:
     name: Build iOS IPA
-    runs-on: macos-latest  # Runner de macOS gratuito para repos públicos
+    runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
@@ -22,6 +22,28 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
+      - name: Parchear Podfile para deshabilitar firma
+        run: |
+          cd ios
+          # Inserta las banderas de no-firma dentro del bloque post_install
+          ruby -i -pe '
+            if $_ =~ /post_install do \|installer\|/
+              $_ << "\n  installer.pods_project.targets.each do |target|\n    target.build_configurations.each do |config|\n      config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_IDENTITY\"] = \"\"\n    end\n  end\n"
+            end
+          ' Podfile
+
+      - name: Limpiar DEVELOPMENT_TEAM del proyecto Xcode
+        run: |
+          cd ios
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
+
+      - name: Ejecutar pod install
+        run: |
+          cd ios
+          pod install --repo-update
+
       - name: Compilar sin firmar
         run: flutter build ios --release --no-codesign
 
@@ -36,3 +58,4 @@ jobs:
         with:
           name: ios-ipa
           path: FlutterIpaExport.ipa
+          retention-days: 30
