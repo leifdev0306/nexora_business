@@ -22,9 +22,9 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
-      # 1. Genera el Podfile sin compilar (--config-only)
+      # 1. Genera el Podfile sin compilar (con --no-codesign para evitar el error de certificados)
       - name: Generar configuración iOS (Podfile)
-        run: flutter build ios --config-only
+        run: flutter build ios --config-only --no-codesign
 
       # 2. Modifica el Podfile: plataforma iOS y deshabilitar firma
       - name: Parchear Podfile
@@ -67,18 +67,27 @@ jobs:
           head -5 Podfile
           tail -25 Podfile
 
-      # 3. Hacer el Podfile de solo lectura para que Flutter no lo sobrescriba
+      # 3. Limpiar referencias de firma en el proyecto Xcode
+      - name: Limpiar DEVELOPMENT_TEAM en el proyecto Xcode
+        run: |
+          cd ios
+          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
+
+      # 4. Hacer el Podfile de solo lectura para que Flutter no lo sobrescriba
       - name: Hacer Podfile inmutable
         run: chmod 444 ios/Podfile
 
-      # 4. Limpiar Pods antiguos e instalar con el Podfile ya fijado
+      # 5. Limpiar Pods antiguos e instalar con el Podfile ya fijado
       - name: Reinstalar Pods
         run: |
           cd ios
           rm -rf Pods Podfile.lock .symlinks
           pod install --repo-update
 
-      # 5. Compilar finalmente sin firma
+      # 6. Compilar finalmente sin firma
       - name: Compilar sin firmar
         run: flutter build ios --release --no-codesign
 
