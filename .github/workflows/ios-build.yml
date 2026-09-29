@@ -1,7 +1,7 @@
 name: Build Unsigned IPA
 
 on:
-  workflow_dispatch:  # Permite ejecutarlo manualmente desde GitHub
+  workflow_dispatch:
 
 jobs:
   build-ios:
@@ -22,37 +22,33 @@ jobs:
       - name: Instalar dependencias
         run: flutter pub get
 
-      - name: Forzar plataforma iOS en el Podfile
+      - name: Forzar plataforma iOS y deshabilitar firma en Podfile
         run: |
           cd ios
-          # 1) Elimina cualquier línea que defina platform :ios (comentada o no)
+          # 1. Elimina cualquier línea 'platform :ios' e inserta la versión 15.0
           sed -i '' '/platform :ios/d' Podfile
-
-          # 2) Inserta la línea al principio del archivo
           sed -i '' "1i\\
           platform :ios, '15.0'
           " Podfile
-
-          # 3) Muestra el resultado para verificar en los logs
-          echo "----- Podfile después de la modificación -----"
-          head -10 Podfile
-
-      - name: Parchear Podfile para deshabilitar firma
-        run: |
-          cd ios
-          # Inserta las banderas de no-firma dentro del bloque post_install
+          # 2. Inserta banderas de no-firma en todos los targets de Pods
           ruby -i -pe '
             if $_ =~ /post_install do \|installer\|/
               $_ << "\n  installer.pods_project.targets.each do |target|\n    target.build_configurations.each do |config|\n      config.build_settings[\"CODE_SIGNING_ALLOWED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_REQUIRED\"] = \"NO\"\n      config.build_settings[\"CODE_SIGNING_IDENTITY\"] = \"\"\n    end\n  end\n"
             end
           ' Podfile
+          echo "----- Podfile después de la modificación -----"
+          head -15 Podfile
 
-      - name: Limpiar DEVELOPMENT_TEAM del proyecto Xcode
+      - name: Limpiar configuración de firma del proyecto Xcode
         run: |
           cd ios
+          # Elimina todas las referencias a firma en el proyecto principal
           sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' Runner.xcodeproj/project.pbxproj
           sed -i '' 's/CODE_SIGN_IDENTITY = [^;]*;/CODE_SIGN_IDENTITY = "";/g' Runner.xcodeproj/project.pbxproj
+          sed -i '' 's/PROVISIONING_PROFILE_SPECIFIER = [^;]*;/PROVISIONING_PROFILE_SPECIFIER = "";/g' Runner.xcodeproj/project.pbxproj
+          echo "----- Verificando limpieza -----"
+          grep -n "DEVELOPMENT_TEAM" Runner.xcodeproj/project.pbxproj || echo "No se encontraron referencias a DEVELOPMENT_TEAM"
 
       - name: Limpiar Pods e instalar de nuevo
         run: |
