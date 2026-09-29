@@ -9,9 +9,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
-import 'package:tu_mipyme/screens/servicio_cancelado_screen.dart';
-import 'package:tu_mipyme/screens/nuevo_producto_screen.dart';
-import 'package:tu_mipyme/screens/reabastecer_screen.dart';
+import 'package:nexora_business/screens/servicio_cancelado_screen.dart';
+import 'package:nexora_business/screens/nuevo_producto_screen.dart';
+import 'package:nexora_business/screens/reabastecer_screen.dart';
 import '../main.dart';
 import '../responsive_helper.dart';
 import '../widgets/cached_product_image.dart';

@@ -13,7 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:intl/intl.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:tu_mipyme/Screens/mi_tienda_screen.dart';
+import 'package:nexora_business/Screens/mi_tienda_screen.dart';
 import '../responsive_helper.dart';
 import '../main.dart';
 import 'about_screen.dart';

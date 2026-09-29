@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'
     show AuthException, Supabase;
-import 'package:tu_mipyme/responsive_helper.dart';
+import 'package:nexora_business/responsive_helper.dart';
 import '../main.dart';
 
 // ============================================================
