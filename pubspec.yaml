@@ -1,7 +1,7 @@
 name: nexora_business
 description: Aplicación de gestión para MIPYMES con sincronización offline y Supabase.
 publish_to: 'none'
-version: 2.4.0+24
+version: 2.5.1+25
 
 environment:
   sdk: '>=3.3.0 <4.0.0'
@@ -110,7 +110,7 @@ msix_config:
   display_name: Nexora Business
   publisher_display_name: Nexora Business
   identity_name: com.nexorabusiness.app
-  msix_version: 2.4.0.0
+  msix_version: 2.5.1.0
   logo_path: assets/logo.png
   capabilities: internetClient, privateNetworkClientServer
   languages: es-es, en-us

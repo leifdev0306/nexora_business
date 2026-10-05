@@ -203,12 +203,16 @@ class _ReportesScreenState extends State<ReportesScreen> {
     _aplicarPeriodo('Rango');
   }
 
+  // ============================================================
+  //  ✅ FIX: filtro de canceladas para que no sumen en el reporte
+  // ============================================================
   List<Venta> _ventasPeriodo(AppProvider provider,
       {DateTime? inicio, DateTime? fin}) {
     final ini = inicio ?? _fechaInicio;
     final fn = fin ?? _fechaFin;
     return provider.ventas
         .where((v) =>
+            v.estado != 'cancelled' &&                    // ← NUEVO
             v.fecha.isAfter(ini) &&
             v.fecha.isBefore(fn) &&
             (_sucursalSeleccionada == null ||
@@ -363,7 +367,9 @@ class _ReportesScreenState extends State<ReportesScreen> {
         _fechaFin.day - i,
       );
       final diaSig = dia.add(const Duration(days: 1));
+      // ✅ FIX: excluir canceladas de la gráfica de evolución
       final ventasDia = provider.ventas.where((v) =>
+          v.estado != 'cancelled' &&                        // ← NUEVO
           v.fecha.isAfter(dia) &&
           v.fecha.isBefore(diaSig) &&
           (_sucursalSeleccionada == null ||
@@ -2634,8 +2640,10 @@ class _ReportesScreenState extends State<ReportesScreen> {
     final hoy = DateTime.now();
     final hoyIni = DateTime(hoy.year, hoy.month, hoy.day);
     final hoyFin = DateTime(hoy.year, hoy.month, hoy.day, 23, 59, 59);
+    // ✅ FIX: excluir canceladas del progreso de metas
     final ventasHoy = provider.ventas
         .where((v) =>
+            v.estado != 'cancelled' &&                        // ← NUEVO
             v.fecha.isAfter(hoyIni) &&
             v.fecha.isBefore(hoyFin) &&
             (_sucursalSeleccionada == null ||
@@ -2645,8 +2653,10 @@ class _ReportesScreenState extends State<ReportesScreen> {
 
     final semIni = provider.inicioSemana;
     final semFin = provider.finSemana;
+    // ✅ FIX: excluir canceladas
     final ventasSem = provider.ventas
         .where((v) =>
+            v.estado != 'cancelled' &&                        // ← NUEVO
             v.fecha.isAfter(semIni) &&
             v.fecha.isBefore(semFin) &&
             (_sucursalSeleccionada == null ||
@@ -2656,8 +2666,10 @@ class _ReportesScreenState extends State<ReportesScreen> {
 
     final mesIni = provider.inicioMes;
     final mesFin = provider.finMes;
+    // ✅ FIX: excluir canceladas
     final ventasMes = provider.ventas
         .where((v) =>
+            v.estado != 'cancelled' &&                        // ← NUEVO
             v.fecha.isAfter(mesIni) &&
             v.fecha.isBefore(mesFin) &&
             (_sucursalSeleccionada == null ||

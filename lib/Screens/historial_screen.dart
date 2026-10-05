@@ -45,6 +45,7 @@ class _P {
   Color get bg            => dark ? const Color(0xFF0A1628) : const Color(0xFFEEF4FC);
   Color get surface       => dark ? const Color(0xFF122340) : const Color(0xFFFFFFFF);
   Color get surface2      => dark ? const Color(0xFF162B4D) : const Color(0xFFF7FAFF);
+  Color get surface3      => dark ? const Color(0xFF1E375C) : const Color(0xFFEFF4FE);
   Color get textHigh      => dark ? const Color(0xFFEEF4FC) : const Color(0xFF0A1A33);
   Color get textMid       => dark ? const Color(0xFFB8CBE8) : const Color(0xFF1C3352);
   Color get textMuted     => dark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
@@ -85,7 +86,14 @@ class _HistorialScreenState extends State<HistorialScreen> {
   DateTime _fechaInicio = DateTime.now().subtract(const Duration(days: 30));
   DateTime _fechaFin = DateTime.now();
   bool _mostrarCanceladas = false;
-  String _rangoRapido = 'Mes';
+
+  // ===== NUEVO: selector de período (idéntico a Reportes) =====
+  String _periodoTipo = 'Mes';
+  DateTime _mesSeleccionado = DateTime.now();
+  DateTime _anioSeleccionado = DateTime.now();
+  DateTime? _diaSeleccionado;
+  DateTime? _rangoInicio;
+  DateTime? _rangoFin;
 
   int _visibleCount = 20;
   final int _incrementCount = 20;
@@ -108,10 +116,12 @@ class _HistorialScreenState extends State<HistorialScreen> {
       if (_esVendedor) {
         final hoy = DateTime.now();
         setState(() {
+          _periodoTipo = 'Hoy';
           _fechaInicio = DateTime(hoy.year, hoy.month, hoy.day);
-          _fechaFin = DateTime(hoy.year, hoy.month, hoy.day + 1);
-          _rangoRapido = 'Hoy';
+          _fechaFin = DateTime(hoy.year, hoy.month, hoy.day, 23, 59, 59);
         });
+      } else {
+        _aplicarPeriodo('Mes');
       }
     });
   }
@@ -126,31 +136,120 @@ class _HistorialScreenState extends State<HistorialScreen> {
   bool _isManager(AppProvider p) =>
       _isAdmin(p) || p.rol == 'gerente' || p.rol == 'gestor';
 
-  void _aplicarRangoRapido(String tipo) {
+  // ============================================================
+  //  SELECTOR DE PERÍODO (idéntico a Reportes)
+  // ============================================================
+  void _aplicarPeriodo(String tipo) {
     final now = DateTime.now();
     setState(() {
-      _rangoRapido = tipo;
+      _periodoTipo = tipo;
       switch (tipo) {
         case 'Hoy':
           _fechaInicio = DateTime(now.year, now.month, now.day);
           _fechaFin = DateTime(now.year, now.month, now.day, 23, 59, 59);
           break;
         case 'Semana':
-          final ini = now.subtract(Duration(days: now.weekday - 1));
-          _fechaInicio = DateTime(ini.year, ini.month, ini.day);
+          _fechaInicio =
+              now.subtract(Duration(days: now.weekday - 1));
+          _fechaInicio = DateTime(
+              _fechaInicio.year, _fechaInicio.month, _fechaInicio.day);
           _fechaFin = now;
           break;
         case 'Mes':
-          _fechaInicio = DateTime(now.year, now.month, 1);
-          _fechaFin = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
+          _fechaInicio =
+              DateTime(_mesSeleccionado.year, _mesSeleccionado.month, 1);
+          _fechaFin = DateTime(_mesSeleccionado.year,
+              _mesSeleccionado.month + 1, 0, 23, 59, 59);
           break;
         case 'Año':
-          _fechaInicio = DateTime(now.year, 1, 1);
-          _fechaFin = now;
+          _fechaInicio = DateTime(_anioSeleccionado.year, 1, 1);
+          _fechaFin =
+              DateTime(_anioSeleccionado.year, 12, 31, 23, 59, 59);
+          break;
+        case 'Dia':
+          if (_diaSeleccionado != null) {
+            _fechaInicio = DateTime(_diaSeleccionado!.year,
+                _diaSeleccionado!.month, _diaSeleccionado!.day);
+            _fechaFin = DateTime(
+                _diaSeleccionado!.year,
+                _diaSeleccionado!.month,
+                _diaSeleccionado!.day,
+                23,
+                59,
+                59);
+          }
+          break;
+        case 'Rango':
+          if (_rangoInicio != null && _rangoFin != null) {
+            _fechaInicio = DateTime(_rangoInicio!.year,
+                _rangoInicio!.month, _rangoInicio!.day);
+            _fechaFin = DateTime(_rangoFin!.year, _rangoFin!.month,
+                _rangoFin!.day, 23, 59, 59);
+          }
           break;
       }
       _visibleCount = 20;
     });
+  }
+
+  Future<void> _seleccionarMes() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _mesSeleccionado,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      _mesSeleccionado = DateTime(picked.year, picked.month, 1);
+      _aplicarPeriodo('Mes');
+    }
+  }
+
+  Future<void> _seleccionarAnio() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _anioSeleccionado,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      _anioSeleccionado = DateTime(picked.year, 1, 1);
+      _aplicarPeriodo('Año');
+    }
+  }
+
+  Future<void> _seleccionarDia() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _diaSeleccionado ?? DateTime.now(),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+    if (picked != null) {
+      _diaSeleccionado = picked;
+      _aplicarPeriodo('Dia');
+    }
+  }
+
+  Future<void> _seleccionarRango() async {
+    final now = DateTime.now();
+    final inicio = await showDatePicker(
+      context: context,
+      initialDate: _rangoInicio ?? now.subtract(const Duration(days: 30)),
+      firstDate: DateTime(2020),
+      lastDate: now,
+    );
+    if (inicio == null) return;
+    final fin = await showDatePicker(
+      context: context,
+      initialDate: _rangoFin ?? now,
+      firstDate: inicio,
+      lastDate: now,
+    );
+    if (fin == null) return;
+    _rangoInicio = inicio;
+    _rangoFin = fin;
+    _aplicarPeriodo('Rango');
   }
 
   // ============================================================
@@ -248,7 +347,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       children: [
                         _searchBar(p),
                         const SizedBox(height: 12),
-                        _periodoChips(p, isVendedor),
+                        _periodSelector(context, p, isVendedor),
                         if (isAdmin) ...[
                           const SizedBox(height: 10),
                           _sucursalFilter(context, provider, p),
@@ -473,55 +572,193 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   // ============================================================
-  //  PERIODO CHIPS
+  //  ✅ NUEVO · SELECTOR DE PERÍODO (idéntico a Reportes)
   // ============================================================
-  Widget _periodoChips(_P p, bool isVendedor) {
-    final opciones =
-        isVendedor ? ['Hoy'] : ['Hoy', 'Semana', 'Mes', 'Año'];
-    return SizedBox(
-      height: 36,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        itemCount: opciones.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final op = opciones[i];
-          final selected = _rangoRapido == op;
-          return Material(
-            color: selected ? Colors.transparent : p.surface,
-            borderRadius: BorderRadius.circular(11),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(11),
-              onTap: isVendedor ? null : () => _aplicarRangoRapido(op),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  gradient: selected
-                      ? const LinearGradient(colors: _C.gradBrand)
-                      : null,
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(
-                    color: selected ? Colors.transparent : p.borderStrong,
+  Widget _periodSelector(BuildContext context, _P p, bool isVendedor) {
+    final opciones = isVendedor
+        ? const ['Hoy']
+        : const ['Hoy', 'Semana', 'Mes', 'Año', 'Dia', 'Rango'];
+
+    return Container(
+      padding: const EdgeInsets.all(6),
+      decoration: BoxDecoration(
+        color: p.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: p.border),
+        boxShadow: p.shadowSm,
+      ),
+      child: Column(
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: opciones.map((op) {
+                final selected = _periodoTipo == op;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(11),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(11),
+                      onTap: isVendedor ? null : () => _aplicarPeriodo(op),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                          gradient: selected
+                              ? const LinearGradient(colors: _C.gradBrand)
+                              : null,
+                          borderRadius: BorderRadius.circular(11),
+                          boxShadow:
+                              selected ? p.glow(_C.primary, o: 0.28) : null,
+                        ),
+                        child: Text(
+                          op,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            fontWeight: selected
+                                ? FontWeight.w900
+                                : FontWeight.w600,
+                            color: selected ? Colors.white : p.textMid,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-                  boxShadow: selected ? p.glow(_C.primary, o: 0.28) : null,
-                ),
-                child: Text(
-                  op,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight:
-                        selected ? FontWeight.w900 : FontWeight.w600,
-                    color: selected ? Colors.white : p.textMid,
-                  ),
-                ),
-              ),
+                );
+              }).toList(),
             ),
-          );
-        },
+          ),
+          if (!isVendedor &&
+              (_periodoTipo == 'Mes' ||
+                  _periodoTipo == 'Año' ||
+                  _periodoTipo == 'Dia' ||
+                  _periodoTipo == 'Rango')) ...[
+            const SizedBox(height: 6),
+            Divider(height: 1, color: p.border),
+            const SizedBox(height: 6),
+            _periodoSelectorEspecifico(context, p),
+          ],
+        ],
       ),
     );
+  }
+
+  Widget _periodoSelectorEspecifico(BuildContext context, _P p) {
+    if (_periodoTipo == 'Mes') {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+            icon: Icon(Icons.chevron_left_rounded, color: p.textMid),
+            onPressed: () {
+              _mesSeleccionado = DateTime(
+                  _mesSeleccionado.year, _mesSeleccionado.month - 1, 1);
+              _aplicarPeriodo('Mes');
+            },
+          ),
+          TextButton(
+            onPressed: _seleccionarMes,
+            style: TextButton.styleFrom(
+              foregroundColor: _C.primary,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            child: Text(
+              DateFormat('MMMM yyyy', 'es').format(_mesSeleccionado),
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 14,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.chevron_right_rounded, color: p.textMid),
+            onPressed: () {
+              final next = DateTime(
+                  _mesSeleccionado.year, _mesSeleccionado.month + 1, 1);
+              if (next.isBefore(
+                  DateTime.now().add(const Duration(days: 31)))) {
+                _mesSeleccionado = next;
+                _aplicarPeriodo('Mes');
+              }
+            },
+          ),
+        ],
+      );
+    }
+    if (_periodoTipo == 'Año') {
+      return Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          IconButton(
+            icon: Icon(Icons.chevron_left_rounded, color: p.textMid),
+            onPressed: () {
+              _anioSeleccionado = DateTime(_anioSeleccionado.year - 1, 1, 1);
+              _aplicarPeriodo('Año');
+            },
+          ),
+          TextButton(
+            onPressed: _seleccionarAnio,
+            style: TextButton.styleFrom(foregroundColor: _C.primary),
+            child: Text(
+              '${_anioSeleccionado.year}',
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                fontSize: 15,
+              ),
+            ),
+          ),
+          IconButton(
+            icon: Icon(Icons.chevron_right_rounded, color: p.textMid),
+            onPressed: () {
+              if (_anioSeleccionado.year < DateTime.now().year) {
+                _anioSeleccionado =
+                    DateTime(_anioSeleccionado.year + 1, 1, 1);
+                _aplicarPeriodo('Año');
+              }
+            },
+          ),
+        ],
+      );
+    }
+    if (_periodoTipo == 'Dia') {
+      return TextButton.icon(
+        onPressed: _seleccionarDia,
+        icon: const Icon(Icons.calendar_today_rounded,
+            size: 15, color: _C.primary),
+        label: Text(
+          _diaSeleccionado != null
+              ? DateFormat('EEEE d MMMM yyyy', 'es')
+                  .format(_diaSeleccionado!)
+              : 'Seleccionar día',
+          style: const TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 13.5,
+          ),
+        ),
+        style: TextButton.styleFrom(foregroundColor: _C.primary),
+      );
+    }
+    if (_periodoTipo == 'Rango') {
+      return TextButton.icon(
+        onPressed: _seleccionarRango,
+        icon: const Icon(Icons.date_range_rounded,
+            size: 15, color: _C.primary),
+        label: Text(
+          _rangoInicio != null && _rangoFin != null
+              ? '${DateFormat('dd/MM/yy').format(_rangoInicio!)} → ${DateFormat('dd/MM/yy').format(_rangoFin!)}'
+              : 'Seleccionar rango',
+          style: const TextStyle(
+            fontWeight: FontWeight.w900,
+            fontSize: 13.5,
+          ),
+        ),
+        style: TextButton.styleFrom(foregroundColor: _C.primary),
+      );
+    }
+    return const SizedBox.shrink();
   }
 
   // ============================================================
@@ -1571,7 +1808,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           ],
         ),
         content: Text(
-          '¿Estás seguro de cancelar la venta de ${venta.productoNombre} por \$${_fmt(venta.total)}?',
+          '¿Estás seguro de cancelar la venta de ${venta.productoNombre} por \$${_fmt(venta.total)}?\n\nEl stock se devolverá automáticamente al producto.',
           style: TextStyle(color: p.textMid, fontSize: 13.5),
         ),
         actions: [
@@ -1601,7 +1838,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
         await provider.eliminarVenta(venta.id);
         if (mounted) {
           mostrarSnackBar(
-              mensaje: 'Venta cancelada correctamente', esExito: true);
+              mensaje: 'Venta cancelada y stock restaurado', esExito: true);
           setState(() {});
         }
       } catch (e) {
@@ -1842,11 +2079,18 @@ class _HistorialScreenState extends State<HistorialScreen> {
                 _filtroMetodo = 'Todos';
                 if (isAdmin) _sucursalSeleccionada = null;
                 if (!isVendedor) {
-                  _fechaInicio =
-                      DateTime.now().subtract(const Duration(days: 30));
-                  _fechaFin = DateTime.now();
+                  _periodoTipo = 'Mes';
+                  _mesSeleccionado = DateTime.now();
+                  _fechaInicio = DateTime(
+                      _mesSeleccionado.year, _mesSeleccionado.month, 1);
+                  _fechaFin = DateTime(
+                      _mesSeleccionado.year,
+                      _mesSeleccionado.month + 1,
+                      0,
+                      23,
+                      59,
+                      59);
                   _mostrarCanceladas = false;
-                  _rangoRapido = 'Mes';
                 }
                 _visibleCount = 20;
               });

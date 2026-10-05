@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart'; // ✅ FORCE UPDATE
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -65,7 +66,7 @@ import 'widgets/cached_product_image.dart';
 part 'main.g.dart';
 
 const String APP_NAME = 'Nexora Business';
-const String APP_VERSION = '2.4.0';
+const String APP_VERSION = '2.5.1';
 
 const String supabaseUrl = 'https://kmqffbxzzfbfrcbsluqs.supabase.co';
 const String supabaseAnonKey =
@@ -76,9 +77,9 @@ const String supabaseAnonKey =
 final uuid = Uuid();
 
 const int LIMITE_VENDEDORES_BASE = 2;
-const int LIMITE_VENDEDORES_PREMIUM = 5;
-const double COSTO_PLAN_BASE = 500.0;
-const double COSTO_PLAN_PREMIUM = 1000.0;
+const int LIMITE_VENDEDORES_PREMIUM = 10;
+const double COSTO_PLAN_BASE = 1000.0;
+const double COSTO_PLAN_PREMIUM = 1500.0;
 const double COSTO_POR_SUCURSAL = 500.0;
 const int DIAS_PRUEBA = 3;
 const int DIAS_PAGO_VIGENCIA = 30;
@@ -2050,108 +2051,152 @@ class AppProvider extends ChangeNotifier {
       pendientesPorTabla.putIfAbsent(p['tabla'] as String, () => []).add(key);
     }
 
-    // ── VENTAS: agrupar por saleGroupId
+    // ── VENTAS: separar cancelaciones (delete) de creaciones (insert)
     final ventasKeys = pendientesPorTabla['ventas'] ?? [];
     if (ventasKeys.isNotEmpty) {
-      final porGrupo = <String, List<dynamic>>{};
+      final cancelaciones = <dynamic>[];
+      final creaciones = <dynamic>[];
       for (final key in ventasKeys) {
         final p = pendientesBox.get(key);
         if (p == null) continue;
-        final grupoId = (p['saleGroupId'] ?? p['id'] ?? key).toString();
-        porGrupo.putIfAbsent(grupoId, () => []).add(key);
+        if (p['accion'] == 'delete') {
+          cancelaciones.add(key);
+        } else {
+          creaciones.add(key);
+        }
       }
 
-      for (final grupoId in porGrupo.keys) {
-        final grupoKeys = porGrupo[grupoId]!;
+      for (final key in cancelaciones) {
+        final p = pendientesBox.get(key);
+        if (p == null) continue;
+        final remoteId = p['id'] as String;
+        int intentos = (p['intentos'] ?? 0) as int;
         try {
-          final items = <Map<String, dynamic>>[];
-          final idsLocales = <String>[];
-          String? branchId;
-          String? customerId;
-          String? note;
-          String? mode;
-          String? currencyId;
-          double exchangeRate = 1;
+          await _ejecutarDelete('ventas', remoteId);
+          await pendientesBox.delete(key);
+        } catch (e) {
+          intentos++;
+          p['intentos'] = intentos;
+          p['ultimoError'] = e.toString();
+          p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
+          await pendientesBox.put(key, p);
 
-          for (final key in grupoKeys) {
-            final p = pendientesBox.get(key);
-            if (p == null) continue;
-            final datos = Map<String, dynamic>.from(p['datos'] as Map);
-            final it = datos['_items'];
-            if (it is List) {
-              for (final x in it) {
-                items.add(Map<String, dynamic>.from(x as Map));
-              }
-            }
-            idsLocales.add(p['id'] as String);
-            branchId ??= datos['_branch_id'] as String?;
-            mode ??= datos['_mode'] as String?;
-            customerId ??= datos['_customer_id'] as String?;
-            note ??= datos['_note'] as String?;
-            currencyId ??= datos['_currency_id'] as String?;
-            exchangeRate = ((datos['_exchange_rate'] ?? 1) as num).toDouble();
+          if (intentos >= _MAX_INTENTOS_SYNC) {
+            await pendientesBox.delete(key);
+            mostrarSnackBar(
+              mensaje:
+                  '⚠️ Cancelación descartada tras $_MAX_INTENTOS_SYNC intentos.',
+              esExito: false,
+            );
+          } else if (intentos >= 5) {
+            mostrarSnackBar(
+              mensaje:
+                  '⚠️ Error persistente al cancelar venta (id: $remoteId).',
+              esExito: false,
+            );
           }
+        }
+      }
 
-          if (items.isEmpty) {
+      if (creaciones.isNotEmpty) {
+        final porGrupo = <String, List<dynamic>>{};
+        for (final key in creaciones) {
+          final p = pendientesBox.get(key);
+          if (p == null) continue;
+          final grupoId = (p['saleGroupId'] ?? p['id'] ?? key).toString();
+          porGrupo.putIfAbsent(grupoId, () => []).add(key);
+        }
+
+        for (final grupoId in porGrupo.keys) {
+          final grupoKeys = porGrupo[grupoId]!;
+          try {
+            final items = <Map<String, dynamic>>[];
+            final idsLocales = <String>[];
+            String? branchId;
+            String? customerId;
+            String? note;
+            String? mode;
+            String? currencyId;
+            double exchangeRate = 1;
+
+            for (final key in grupoKeys) {
+              final p = pendientesBox.get(key);
+              if (p == null) continue;
+              final datos = Map<String, dynamic>.from(p['datos'] as Map);
+              final it = datos['_items'];
+              if (it is List) {
+                for (final x in it) {
+                  items.add(Map<String, dynamic>.from(x as Map));
+                }
+              }
+              idsLocales.add(p['id'] as String);
+              branchId ??= datos['_branch_id'] as String?;
+              mode ??= datos['_mode'] as String?;
+              customerId ??= datos['_customer_id'] as String?;
+              note ??= datos['_note'] as String?;
+              currencyId ??= datos['_currency_id'] as String?;
+              exchangeRate = ((datos['_exchange_rate'] ?? 1) as num).toDouble();
+            }
+
+            if (items.isEmpty) {
+              for (final k in grupoKeys) {
+                await pendientesBox.delete(k);
+              }
+              continue;
+            }
+
+            final remoteId = await supabase.rpc('create_sale', params: {
+              'p_branch_id': branchId,
+              'p_items': items,
+              'p_customer_id': customerId,
+              'p_discount': 0,
+              'p_tax': 0,
+              'p_currency_id': currencyId,
+              'p_exchange_rate': exchangeRate,
+              'p_mode': mode ?? 'real_time',
+              'p_note': note,
+              'p_is_trial_data': false,
+            });
+
+            if (remoteId != null) {
+              for (final idLocal in idsLocales) {
+                final v = ventaBox.get(idLocal);
+                if (v != null) {
+                  await ventaBox.delete(idLocal);
+                  v.id = '${remoteId}_$idLocal';
+                  v.saleGroupId = remoteId.toString();
+                  await ventaBox.put(v.id, v);
+                }
+              }
+              ventas = ventaBox.values.toList();
+            }
+
             for (final k in grupoKeys) {
               await pendientesBox.delete(k);
             }
-            continue;
-          }
+          } catch (e) {
+            for (final key in grupoKeys) {
+              final p = pendientesBox.get(key);
+              if (p == null) continue;
+              final intentos = ((p['intentos'] ?? 0) as int) + 1;
+              p['intentos'] = intentos;
+              p['ultimoError'] = e.toString();
+              p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
+              await pendientesBox.put(key, p);
 
-          // ✅ FIX: sin p_client_group_id (no existe en la firma SQL)
-          final remoteId = await supabase.rpc('create_sale', params: {
-            'p_branch_id': branchId,
-            'p_items': items,
-            'p_customer_id': customerId,
-            'p_discount': 0,
-            'p_tax': 0,
-            'p_currency_id': currencyId,
-            'p_exchange_rate': exchangeRate,
-            'p_mode': mode ?? 'real_time',
-            'p_note': note,
-            'p_is_trial_data': false,
-          });
-
-          if (remoteId != null) {
-            for (final idLocal in idsLocales) {
-              final v = ventaBox.get(idLocal);
-              if (v != null) {
-                await ventaBox.delete(idLocal);
-                v.id = '${remoteId}_$idLocal';
-                v.saleGroupId = remoteId.toString();
-                await ventaBox.put(v.id, v);
+              if (intentos >= _MAX_INTENTOS_SYNC) {
+                await pendientesBox.delete(key);
+                mostrarSnackBar(
+                  mensaje:
+                      '⚠️ Venta descartada tras $_MAX_INTENTOS_SYNC intentos fallidos.',
+                  esExito: false,
+                );
+              } else if (intentos >= 5) {
+                mostrarSnackBar(
+                  mensaje: '⚠️ Error persistente al sincronizar venta.',
+                  esExito: false,
+                );
               }
-            }
-            ventas = ventaBox.values.toList();
-          }
-
-          for (final k in grupoKeys) {
-            await pendientesBox.delete(k);
-          }
-        } catch (e) {
-          for (final key in grupoKeys) {
-            final p = pendientesBox.get(key);
-            if (p == null) continue;
-            final intentos = ((p['intentos'] ?? 0) as int) + 1;
-            p['intentos'] = intentos;
-            p['ultimoError'] = e.toString();
-            p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
-            await pendientesBox.put(key, p);
-
-            // ✅ FIX: descartar tras _MAX_INTENTOS_SYNC
-            if (intentos >= _MAX_INTENTOS_SYNC) {
-              await pendientesBox.delete(key);
-              mostrarSnackBar(
-                mensaje:
-                    '⚠️ Venta descartada tras $_MAX_INTENTOS_SYNC intentos fallidos.',
-                esExito: false,
-              );
-            } else if (intentos >= 5) {
-              mostrarSnackBar(
-                mensaje: '⚠️ Error persistente al sincronizar venta.',
-                esExito: false,
-              );
             }
           }
         }
@@ -2187,7 +2232,6 @@ class AppProvider extends ChangeNotifier {
           p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
           await pendientesBox.put(key, p);
 
-          // ✅ FIX: descartar tras _MAX_INTENTOS_SYNC
           if (intentos >= _MAX_INTENTOS_SYNC) {
             await pendientesBox.delete(key);
             mostrarSnackBar(
@@ -2237,7 +2281,6 @@ class AppProvider extends ChangeNotifier {
           final stock = (initialStock as num).toDouble();
           if (stock > 0) {
             try {
-              // ✅ FIX: sin p_reference_id (no existe en la firma SQL)
               await supabase.rpc('receive_inventory', params: {
                 'p_branch_id': branchId,
                 'p_product_id': datosProd['id'],
@@ -2314,9 +2357,14 @@ class AppProvider extends ChangeNotifier {
         await supabase.from('products').update({'active': false}).eq('id', id);
         return;
       case 'ventas':
-        await supabase
-            .from('sales')
-            .update({'status': 'cancelled'}).eq('id', id);
+        try {
+          await supabase.rpc('cancel_sale', params: {'p_sale_id': id});
+        } catch (e) {
+          print('⚠️ cancel_sale falló ($e) → fallback a update status');
+          await supabase
+              .from('sales')
+              .update({'status': 'cancelled'}).eq('id', id);
+        }
         return;
       case 'gastos':
         await supabase.from('expenses').delete().eq('id', id);
@@ -2451,11 +2499,11 @@ class AppProvider extends ChangeNotifier {
     }
     productos = productoBox.values.toList();
 
-    // ✅ FIX: no duplicar ventas que ya existen localmente con el mismo id
     final ventasRemotas = await supabase
         .from('sales')
         .select('*, sale_items(*)')
         .eq('company_id', empresaId!)
+        .neq('status', 'cancelled')
         .order('completed_at', ascending: false)
         .limit(500);
     for (var json in ventasRemotas) {
@@ -2478,6 +2526,15 @@ class AppProvider extends ChangeNotifier {
         await ventaBox.put(v.id, v);
       }
     }
+
+    final canceladasLocales = ventaBox.values
+        .where((v) => v.estado == 'cancelled')
+        .map((v) => v.id)
+        .toList();
+    for (final id in canceladasLocales) {
+      await ventaBox.delete(id);
+    }
+
     ventas = ventaBox.values.toList();
 
     final gastosRemotos = await supabase
@@ -3467,7 +3524,6 @@ class AppProvider extends ChangeNotifier {
       String destBranchId, List<Map<String, dynamic>> items,
       {String? nota}) async {
     try {
-      // ✅ FIX: sin p_client_group_id (no existe en la firma SQL)
       final result = await supabase.rpc('create_stock_transfer', params: {
         'p_source_branch_id': sourceBranchId,
         'p_destination_branch_id': destBranchId,
@@ -3588,17 +3644,23 @@ class AppProvider extends ChangeNotifier {
       _obtenerProductosFiltradosPorSucursal();
 
   List<Venta> _obtenerVentasPermitidas() {
-    if (esAdminGlobal) return ventas;
+    final activas =
+        ventas.where((v) => v.estado != 'cancelled').toList();
+
+    if (esAdminGlobal) return activas;
     if (esGerente) {
-      return ventas.where((v) => v.sucursalId == sucursalIdUsuario).toList();
-    }
-    if (esVendedor) {
-      return ventas
-          .where((v) =>
-              v.usuarioId == usuarioId && v.sucursalId == sucursalIdUsuario)
+      return activas
+          .where((v) => v.sucursalId == sucursalIdUsuario)
           .toList();
     }
-    return ventas;
+    if (esVendedor) {
+      return activas
+          .where((v) =>
+              v.usuarioId == usuarioId &&
+              v.sucursalId == sucursalIdUsuario)
+          .toList();
+    }
+    return activas;
   }
 
   List<Venta> get ventasPermitidas => _obtenerVentasPermitidas();
@@ -4025,7 +4087,6 @@ class AppProvider extends ChangeNotifier {
     try {
       await supabase.auth.setSession(refreshToken);
     } catch (e) {
-      // Fallback en versiones antiguas del SDK
       // ignore: deprecated_member_use
       await supabase.auth.recoverSession(refreshToken);
     }
@@ -4186,22 +4247,26 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // ✅ FORCE UPDATE
   String? _latestVersion;
   String? _downloadUrl;
   String? _changelog;
   bool _hasUpdate = false;
+  bool _forceUpdate = false;
 
   String get currentVersion => APP_VERSION;
   String? get latestVersion => _latestVersion;
   String? get downloadUrl => _downloadUrl;
   String? get changelog => _changelog;
   bool get hasUpdate => _hasUpdate;
+  bool get forceUpdate => _forceUpdate;
 
+  // ✅ FORCE UPDATE
   Future<void> checkForUpdate() async {
     try {
       final response = await supabase
           .from('app_versions')
-          .select('version, download_url, changelog')
+          .select('version, download_url, changelog, force_update')
           .eq('active', true)
           .order('release_date', ascending: false)
           .limit(1);
@@ -4210,6 +4275,7 @@ class AppProvider extends ChangeNotifier {
         _latestVersion = data['version'] as String?;
         _downloadUrl = data['download_url'] as String?;
         _changelog = data['changelog'] as String?;
+        _forceUpdate = (data['force_update'] as bool?) ?? false;
         if (_latestVersion != null) {
           _hasUpdate = _isNewerVersion(_latestVersion!, APP_VERSION);
         }
@@ -4585,7 +4651,6 @@ class AppProvider extends ChangeNotifier {
       productos = productoBox.values.toList();
 
       final refId = uuid.v4();
-      // ✅ FIX: sin p_reference_id (no existe en la firma SQL)
       final rpcDatos = {
         '_rpc': 'receive_inventory',
         '_params': {
@@ -4631,7 +4696,6 @@ class AppProvider extends ChangeNotifier {
   }) async {
     try {
       verificarEmpresaActiva();
-      // ✅ FIX: sin p_client_group_id (no existe en la firma SQL)
       final result = await supabase.rpc('create_sale', params: {
         'p_branch_id': branchId,
         'p_items': items,
@@ -4688,6 +4752,47 @@ class AppProvider extends ChangeNotifier {
     _checkLowStockAndNotify();
   }
 
+  Future<void> _restaurarStockDeVenta(Venta venta) async {
+    final producto = getProductoById(venta.productoId);
+    if (producto == null || venta.cantidad <= 0) return;
+
+    final cantidad = venta.cantidad;
+    double costoUnit;
+    if (venta.costoUnitario > 0) {
+      costoUnit = venta.costoUnitario;
+    } else if (venta.costoTotal > 0 && venta.cantidad > 0) {
+      costoUnit = venta.costoTotal / venta.cantidad;
+    } else {
+      costoUnit = producto.precioCompra;
+    }
+
+    final nuevosLotes = List<Map<String, dynamic>>.from(producto.lotes);
+    final idx = nuevosLotes.indexWhere(
+        (l) => (l['precioCompra'] as num?)?.toDouble() == costoUnit);
+
+    if (idx >= 0) {
+      nuevosLotes[idx] = {
+        ...nuevosLotes[idx],
+        'cantidad':
+            ((nuevosLotes[idx]['cantidad'] as num?)?.toDouble() ?? 0) +
+                cantidad,
+      };
+    } else {
+      nuevosLotes.insert(0, {
+        'cantidad': cantidad,
+        'precioCompra': costoUnit,
+      });
+    }
+
+    producto.lotes = nuevosLotes;
+    producto.stock = producto.stock + cantidad;
+    producto.updatedAt = DateTime.now();
+    await productoBox.put(producto.id, producto);
+    productos = productoBox.values.toList();
+
+    _checkLowStockAndNotify();
+  }
+
   Future<void> agregarVenta(Venta venta) async {
     try {
       verificarEmpresaActiva();
@@ -4731,7 +4836,6 @@ class AppProvider extends ChangeNotifier {
               'discount': 0,
             }
           ];
-          // ✅ FIX: sin p_client_group_id (no existe en la firma SQL)
           final remoteId = await supabase.rpc('create_sale', params: {
             'p_branch_id': branchId,
             'p_items': items,
@@ -4809,12 +4913,28 @@ class AppProvider extends ChangeNotifier {
       verificarEmpresaActiva();
       final venta = ventaBox.get(id);
       if (venta == null) return;
+
+      if (venta.estado == 'cancelled') {
+        await ventaBox.delete(id);
+        ventas = ventaBox.values.toList();
+        notifyListeners();
+        return;
+      }
+
       final remoteId = venta.saleGroupId ?? venta.id;
+
+      await _restaurarStockDeVenta(venta);
 
       await ventaBox.delete(id);
       ventas = ventaBox.values.toList();
       await _guardarPendiente('delete', 'ventas', {}, remoteId);
-      mostrarSnackBar(mensaje: 'Venta cancelada', esExito: true);
+
+      mostrarSnackBar(
+        mensaje: _hayConexion
+            ? 'Venta cancelada y stock restaurado'
+            : 'Venta cancelada (se sincronizará)',
+        esExito: true,
+      );
       notifyListeners();
     } catch (e) {
       mostrarSnackBar(
@@ -5749,11 +5869,6 @@ class AppProvider extends ChangeNotifier {
     return c;
   }
 
-  // ============================================================
-  //  LIMPIAR PENDIENTES "ENVENENADOS" (ventas / rpc)
-  //  Útil después de arreglar un bug que dejó la cola con errores.
-  //  NO toca los datos locales de ventaBox, solo la cola de sync.
-  // ============================================================
   Future<int> limpiarPendientesVentasRotos() async {
     int c = 0;
     for (var key in pendientesBox.keys.toList()) {
@@ -6374,13 +6489,19 @@ class MyApp extends StatelessWidget {
                     ),
                   );
                 default:
+                  // ✅ FORCE UPDATE: ForceUpdateBlocker por fuera del
+                  // PaymentBlocker. Si hay update obligatoria, bloquea
+                  // incluso si hay un problema de pago.
                   return MaterialPageRoute(
                     builder: (_) => provider.isInitialized
                         ? (provider.usuarioId == null
                             ? LoginScreen()
-                            : PaymentBlocker(
+                            : ForceUpdateBlocker(
                                 provider: provider,
-                                child: HomeScreen(),
+                                child: PaymentBlocker(
+                                  provider: provider,
+                                  child: HomeScreen(),
+                                ),
                               ))
                         : SplashScreen(),
                   );
@@ -6458,6 +6579,548 @@ class PaymentBlocker extends StatelessWidget {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
+//  ✅ FORCE UPDATE BLOCKER
+//  Bloquea TODA la app cuando hay actualización obligatoria.
+//  Se coloca por FUERA de PaymentBlocker para que ni siquiera
+//  se evalúe el estado de pago cuando hay update forzada.
+// ============================================================
+class ForceUpdateBlocker extends StatelessWidget {
+  final AppProvider provider;
+  final Widget child;
+
+  const ForceUpdateBlocker({
+    Key? key,
+    required this.provider,
+    required this.child,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    if (!provider.hasUpdate || !provider.forceUpdate) return child;
+    return _ForceUpdateScreen(provider: provider);
+  }
+}
+
+class _ForceUpdateScreen extends StatelessWidget {
+  final AppProvider provider;
+  const _ForceUpdateScreen({required this.provider});
+
+  Future<void> _abrirDescarga(BuildContext context) async {
+    final url = provider.downloadUrl ?? '';
+    if (url.isEmpty) {
+      mostrarSnackBar(
+        mensaje: 'No hay URL de descarga configurada. Contacta a soporte.',
+        esExito: false,
+      );
+      return;
+    }
+    try {
+      await Share.share(url, subject: 'Actualización Nexora Business');
+    } catch (_) {
+      mostrarSnackBar(
+        mensaje: 'No se pudo abrir la descarga. Enlace: $url',
+        esExito: false,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final bg = isDark ? const Color(0xFF0A1628) : const Color(0xFFEEF4FC);
+    final surface = isDark ? const Color(0xFF122340) : Colors.white;
+    final surface2 =
+        isDark ? const Color(0xFF162B4D) : const Color(0xFFF7FAFF);
+    final textHigh = isDark ? const Color(0xFFEEF4FC) : const Color(0xFF0A1A33);
+    final textMid = isDark ? const Color(0xFFB8CBE8) : const Color(0xFF1C3352);
+    final textMuted = isDark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
+    final border = isDark ? const Color(0x291A5CFF) : const Color(0x141A5CFF);
+
+    const primary = Color(0xFF1A5CFF);
+    const cyan = Color(0xFF06B6D4);
+    const success = Color(0xFF10B981);
+    const warning = Color(0xFFF59E0B);
+    const danger = Color(0xFFEF4444);
+
+    final currentVersion = provider.currentVersion;
+    final latestVersion = provider.latestVersion ?? '';
+    final changelog = provider.changelog ?? '';
+
+    return PopScope(
+      canPop: false,
+      child: Scaffold(
+        backgroundColor: bg,
+        body: Stack(
+          children: [
+            // Fondo con orbes
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Stack(
+                  children: [
+                    Positioned(
+                      top: -200,
+                      left: -160,
+                      child: Container(
+                        width: 520,
+                        height: 520,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              primary.withOpacity(isDark ? .22 : .14),
+                              primary.withOpacity(0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      bottom: -220,
+                      right: -140,
+                      child: Container(
+                        width: 480,
+                        height: 480,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          gradient: RadialGradient(
+                            colors: [
+                              cyan.withOpacity(isDark ? .18 : .10),
+                              cyan.withOpacity(0),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+            SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 480),
+                    child: Column(
+                      children: [
+                        // Logo
+                        Container(
+                          width: 84,
+                          height: 84,
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(24),
+                            boxShadow: [
+                              BoxShadow(
+                                color: primary.withOpacity(.35),
+                                blurRadius: 28,
+                                offset: const Offset(0, 10),
+                              ),
+                            ],
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(24),
+                            child: Image.asset(
+                              'assets/logo.png',
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                decoration: const BoxDecoration(
+                                  gradient: LinearGradient(
+                                    colors: [primary, cyan],
+                                    begin: Alignment.topLeft,
+                                    end: Alignment.bottomRight,
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.rocket_launch_rounded,
+                                  color: Colors.white,
+                                  size: 38,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        Text(
+                          APP_NAME,
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.3,
+                            color: textHigh,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Actualización obligatoria',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: textMuted,
+                          ),
+                        ),
+
+                        const SizedBox(height: 28),
+
+                        // Card principal
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(24),
+                          decoration: BoxDecoration(
+                            color: surface,
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: border),
+                            boxShadow: [
+                              BoxShadow(
+                                color: isDark
+                                    ? Colors.black.withOpacity(.4)
+                                    : const Color(0xFF0A1A33)
+                                        .withOpacity(.10),
+                                blurRadius: 32,
+                                offset: const Offset(0, 12),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              // Icono grande
+                              Center(
+                                child: Container(
+                                  width: 72,
+                                  height: 72,
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      colors: [primary, cyan],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    borderRadius: BorderRadius.circular(22),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: primary.withOpacity(.42),
+                                        blurRadius: 24,
+                                        offset: const Offset(0, 10),
+                                      ),
+                                    ],
+                                  ),
+                                  child: const Icon(
+                                    Icons.system_update_rounded,
+                                    color: Colors.white,
+                                    size: 34,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+
+                              Text(
+                                'Nueva versión disponible',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -0.5,
+                                  color: textHigh,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Necesitas actualizar Nexora Business para continuar usando la aplicación.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  height: 1.45,
+                                  color: textMid,
+                                ),
+                              ),
+
+                              const SizedBox(height: 22),
+
+                              // Versiones
+                              Container(
+                                padding: const EdgeInsets.all(14),
+                                decoration: BoxDecoration(
+                                  color: surface2,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(color: border),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Expanded(
+                                      child: _versionCol(
+                                        'Instalada',
+                                        'v$currentVersion',
+                                        textMuted,
+                                        isDark,
+                                      ),
+                                    ),
+                                    Container(
+                                      width: 1,
+                                      height: 36,
+                                      color: border,
+                                    ),
+                                    Expanded(
+                                      child: _versionCol(
+                                        'Nueva',
+                                        'v$latestVersion',
+                                        success,
+                                        isDark,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+
+                              // Changelog
+                              if (changelog.trim().isNotEmpty) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  constraints:
+                                      const BoxConstraints(maxHeight: 200),
+                                  padding: const EdgeInsets.all(14),
+                                  decoration: BoxDecoration(
+                                    color: warning
+                                        .withOpacity(isDark ? .10 : .06),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(
+                                      color: warning.withOpacity(.28),
+                                    ),
+                                  ),
+                                  child: SingleChildScrollView(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            const Icon(
+                                              Icons.article_rounded,
+                                              size: 14,
+                                              color: warning,
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                              'NOVEDADES',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                fontWeight: FontWeight.w900,
+                                                letterSpacing: 0.8,
+                                                color: warning,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 8),
+                                        Text(
+                                          changelog,
+                                          style: TextStyle(
+                                            fontSize: 12.5,
+                                            height: 1.5,
+                                            color: textMid,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+
+                              const SizedBox(height: 22),
+
+                              // Botón principal
+                              SizedBox(
+                                height: 52,
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _abrirDescarga(context),
+                                  icon: const Icon(
+                                    Icons.download_rounded,
+                                    size: 20,
+                                  ),
+                                  label: const Text(
+                                    'Actualizar ahora',
+                                    style: TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 0.1,
+                                    ),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: primary,
+                                    foregroundColor: Colors.white,
+                                    elevation: 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(14),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'La app se cerrará automáticamente cuando la actualización esté instalada.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: textMuted,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        const SizedBox(height: 20),
+
+                        // Botones secundarios
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _ghostButton(
+                              icon: Icons.support_agent_rounded,
+                              label: 'Soporte',
+                              color: textMuted,
+                              onTap: () {
+                                Navigator.of(context, rootNavigator: true)
+                                    .pushNamed('/soporte');
+                              },
+                            ),
+                            const SizedBox(width: 16),
+                            Container(
+                              width: 1,
+                              height: 14,
+                              color: textMuted.withOpacity(.35),
+                            ),
+                            const SizedBox(width: 16),
+                            _ghostButton(
+                              icon: Icons.logout_rounded,
+                              label: 'Cerrar sesión',
+                              color: textMuted,
+                              onTap: () async {
+                                final ok = await showDialog<bool>(
+                                  context: context,
+                                  builder: (ctx) => AlertDialog(
+                                    backgroundColor: surface,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius:
+                                          BorderRadius.circular(18),
+                                    ),
+                                    title: Text(
+                                      '¿Cerrar sesión?',
+                                      style: TextStyle(
+                                        color: textHigh,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    content: Text(
+                                      'Saldrás de tu cuenta hasta que actualices la app.',
+                                      style: TextStyle(
+                                        color: textMid,
+                                        fontSize: 13.5,
+                                      ),
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, false),
+                                        child: const Text('Cancelar'),
+                                      ),
+                                      ElevatedButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, true),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: danger,
+                                        ),
+                                        child: const Text('Cerrar sesión'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                if (ok == true) {
+                                  await provider.logout();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Nexora Business · v$currentVersion',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: textMuted.withOpacity(.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _versionCol(
+      String label, String value, Color color, bool isDark) {
+    final textMuted =
+        isDark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
+    return Column(
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 9.5,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.6,
+            color: textMuted,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w900,
+            letterSpacing: -0.4,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _ghostButton({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 15, color: color),
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: const Size(0, 32),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
         ),
       ),
     );
