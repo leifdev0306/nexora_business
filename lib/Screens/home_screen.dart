@@ -1,9 +1,10 @@
 // ============================================================
 //  home_screen.dart  ·  NEXORA BUSINESS
-//  Home v5.2 · "Command Center"
+//  Home v5.3 · "Command Center"
 //  · Carrusel de más vendidos con imágenes y efectos
 //  · Panel "Tienda en línea" (Mi tienda + Red Nexora)
 //  · Panel "Más acciones" con el resto de módulos
+//  · ✅ NUEVO: acceso directo a Categorías (drawer, sidebar, más acciones)
 //  · Command bar simplificada (solo lo esencial)
 //  · Manejo de actualización (obligatoria / opcional)
 // ============================================================
@@ -38,6 +39,7 @@ class _C {
   static const orange    = Color(0xFFF97316);
   static const teal      = Color(0xFF14B8A6);
   static const muted     = Color(0xFF607B9E);
+  static const rose      = Color(0xFFF43F5E);
 
   static const network    = Color(0xFF06B6D4);
   static const myBusiness = Color(0xFF8B5CF6);
@@ -50,6 +52,7 @@ class _C {
   static const gradPurple  = [Color(0xFF8B5CF6), Color(0xFFEC4899)];
   static const gradPremium = [Color(0xFFF59E0B), Color(0xFFEC4899), Color(0xFF8B5CF6)];
   static const gradNetwork = [Color(0xFF06B6D4), Color(0xFF3B82F6)];
+  static const gradCats    = [Color(0xFFEC4899), Color(0xFF8B5CF6)];
 }
 
 class _P {
@@ -286,11 +289,6 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ─── Update ──────────────────────────────────────────────────
-  // Marca como obligatoria si el major de la versión más nueva
-  // es mayor que el actual (ej. 2.x → 3.x). Además, si el server
-  // expone `force_update = true` (campo en app_versions), el
-  // provider debería exponerlo — pero mientras tanto usamos esta
-  // heurística segura.
   bool _isForceUpdate(AppProvider provider) {
     if (!provider.hasUpdate) return false;
     final remote = provider.latestVersion;
@@ -309,7 +307,6 @@ class _HomeScreenState extends State<HomeScreen>
   Future<void> _checkForceUpdate(AppProvider provider) async {
     if (!_isForceUpdate(provider)) return;
     final v = provider.latestVersion ?? '';
-    // Si ya lo descartó para esta versión, no molestar de nuevo
     final dismissed =
         provider.settingsBox?.get(_KEY_FORCE_UPDATE_DISMISSED) as String?;
     if (dismissed == v) return;
@@ -537,11 +534,12 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   /// Acciones que aparecen en el panel "Más acciones".
-  /// Se excluyen las que ya están en la command bar o en el panel
-  /// de Tienda en línea (Mi tienda / Red Nexora).
   List<_QuickAction> _secondaryActions(AppProvider provider) {
     final isManager = _isManager(provider);
     final isAdmin = _isAdmin(provider);
+
+    final catsPropias = provider.categoriasPropias.length;
+    final catsBadge = catsPropias > 0 ? '$catsPropias' : null;
 
     final excluir = {
       '/mi-tienda',
@@ -554,6 +552,15 @@ class _HomeScreenState extends State<HomeScreen>
     };
 
     final todo = <_QuickAction>[
+      // ✅ NUEVO · Categorías
+      _QuickAction(
+        label: 'Categorías',
+        sub: 'Organiza productos',
+        icon: Icons.category_rounded,
+        route: '/categorias',
+        color: _C.pink,
+        badge: catsBadge,
+      ),
       if (isManager)
         _QuickAction(
           label: 'Clientes',
@@ -568,7 +575,7 @@ class _HomeScreenState extends State<HomeScreen>
           sub: 'Egresos',
           icon: Icons.receipt_long_rounded,
           route: '/gastos',
-          color: _C.pink,
+          color: _C.orange,
         ),
       if (isManager)
         _QuickAction(
@@ -592,7 +599,7 @@ class _HomeScreenState extends State<HomeScreen>
           sub: 'Pérdidas',
           icon: Icons.warning_amber_rounded,
           route: '/mermas',
-          color: _C.orange,
+          color: _C.rose,
         ),
       if (isManager)
         _QuickAction(
@@ -688,14 +695,11 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ============================================================
   //  COMMAND BAR · orden derecha → izquierda por importancia
-  //  Se prioriza: Venta · Inventario · Historial · Mi tienda · Red
   // ============================================================
   List<_CommandItem> _commandItems(AppProvider provider) {
     final agotados =
         provider.productos.where((x) => x.stock <= 0).length;
 
-    // Se listan en orden IZQUIERDA → DERECHA; el más importante
-    // queda más cerca del botón de venta (extremo derecho).
     return [
       _CommandItem(
         label: 'Red Nexora',
@@ -995,7 +999,7 @@ class _HomeScreenState extends State<HomeScreen>
     final nombre = provider.nombreEmpresa ?? 'Mi Empresa';
     final mensaje = '📢 ¡Te invito a usar $APP_NAME!\n\n'
         '$nombre ya usa $APP_NAME para gestionar su negocio.\n\n'
-        'Regístrate gratis en: https://leifdev0306.github.io/Tu-MiPyme/';
+        'Regístrate gratis en: https://leifdev0306.github.io/Nexora/';
 
     showDialog(
       context: context,
@@ -1598,7 +1602,6 @@ class _HomeScreenState extends State<HomeScreen>
   Widget _updateBanner(
       BuildContext context, AppProvider provider, _P p) {
     if (!provider.hasUpdate) return const SizedBox.shrink();
-    // Si ya se mostró el diálogo forzado, no insistir en el banner
     if (_isForceUpdate(provider)) return const SizedBox.shrink();
 
     final version = provider.latestVersion ?? '';
@@ -2318,8 +2321,6 @@ class _HomeScreenState extends State<HomeScreen>
 
   // ============================================================
   //  PANEL · TIENDA EN LÍNEA
-  //  Divide en Mi tienda + Red Nexora
-  //  Si no hay tienda, muestra modo "promo / anuncio"
   // ============================================================
   Widget _tiendaEnLineaPanel(
       BuildContext context, AppProvider provider, _P p) {
@@ -2337,7 +2338,6 @@ class _HomeScreenState extends State<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Header
           Row(
             children: [
               Container(
@@ -2432,7 +2432,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ─── Card · Mi tienda ───────────────────────────────────────
   Widget _miTiendaCard(BuildContext context, AppProvider provider, _P p,
       bool tieneTienda) {
     if (tieneTienda) {
@@ -2460,7 +2459,6 @@ class _HomeScreenState extends State<HomeScreen>
       );
     }
 
-    // Modo promocional (sin tienda activa)
     return _businessPromoCard(
       context: context,
       p: p,
@@ -2484,10 +2482,8 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ─── Card · Red Nexora ──────────────────────────────────────
   Widget _redNexoraCard(
       BuildContext context, AppProvider provider, _P p) {
-    // Contar tiendas activas en la red (si están cacheadas)
     int totalRed = 0;
     try {
       final list = provider.catalogosBox.get('network_stores');
@@ -2518,7 +2514,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ─── Tile base (una mitad del panel) ────────────────────────
   Widget _businessTile({
     required BuildContext context,
     required _P p,
@@ -2661,7 +2656,6 @@ class _HomeScreenState extends State<HomeScreen>
     );
   }
 
-  // ─── Variante promo (ad-style) ──────────────────────────────
   Widget _businessPromoCard({
     required BuildContext context,
     required _P p,
@@ -2894,89 +2888,92 @@ class _HomeScreenState extends State<HomeScreen>
 
   Widget _moreActionTile(BuildContext context, _P p, _QuickAction a) {
     final tieneBadge = a.badge != null && a.badge!.isNotEmpty;
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () => Navigator.pushNamed(context, a.route),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
-          decoration: BoxDecoration(
-            color: p.surface2,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: p.border),
+    return _HoverTile(
+      p: p,
+      color: a.color,
+      onTap: () => Navigator.pushNamed(context, a.route),
+      builder: (hovered) => Container(
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        decoration: BoxDecoration(
+          color: hovered ? a.color.withOpacity(.06) : p.surface2,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: hovered ? a.color.withOpacity(.42) : p.border,
+            width: hovered ? 1.4 : 1,
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 34,
-                    height: 34,
-                    decoration: BoxDecoration(
-                      color: a.color.withOpacity(.14),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: a.color.withOpacity(.28)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                AnimatedContainer(
+                  duration: const Duration(milliseconds: 180),
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: a.color.withOpacity(hovered ? .20 : .14),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: a.color.withOpacity(hovered ? .44 : .28),
                     ),
-                    child: Icon(a.icon, color: a.color, size: 17),
                   ),
-                  if (tieneBadge)
-                    Positioned(
-                      right: -4,
-                      top: -4,
-                      child: Container(
-                        constraints: const BoxConstraints(
-                            minWidth: 16, minHeight: 16),
-                        padding:
-                            const EdgeInsets.symmetric(horizontal: 4),
-                        alignment: Alignment.center,
-                        decoration: BoxDecoration(
-                          color: a.color,
-                          shape: BoxShape.circle,
-                          boxShadow: [
-                            BoxShadow(
-                              color: a.color.withOpacity(.4),
-                              blurRadius: 6,
-                            ),
-                          ],
-                        ),
-                        child: Text(
-                          a.badge!,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 9,
-                            fontWeight: FontWeight.w900,
+                  child: Icon(a.icon, color: a.color, size: 17),
+                ),
+                if (tieneBadge)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      constraints: const BoxConstraints(
+                          minWidth: 16, minHeight: 16),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 4),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: a.color,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: a.color.withOpacity(.4),
+                            blurRadius: 6,
                           ),
+                        ],
+                      ),
+                      child: Text(
+                        a.badge!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
                         ),
                       ),
                     ),
-                ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              a.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.1,
+                color: p.textHigh,
               ),
-              const SizedBox(height: 6),
-              Text(
-                a.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: -0.1,
-                  color: p.textHigh,
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
 
   // ============================================================
-  //  CARRUSEL · MÁS VENDIDOS (con imágenes y efectos)
+  //  CARRUSEL · MÁS VENDIDOS
   // ============================================================
   Widget _topProductsCarousel(
       BuildContext context, AppProvider provider, _P p,
@@ -3372,7 +3369,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================================
-  //  BOTTOM NAV (mobile) · 4 items + FAB
+  //  BOTTOM NAV (mobile)
   // ============================================================
   Widget _mobileBottomNav(
       BuildContext context, AppProvider provider, _P p) {
@@ -3715,6 +3712,8 @@ class _HomeScreenState extends State<HomeScreen>
     final isAdmin = _isAdmin(provider);
     final isManager = _isManager(provider);
 
+    final catsPropias = provider.categoriasPropias.length;
+
     return Container(
       width: 250,
       decoration: BoxDecoration(
@@ -3861,6 +3860,17 @@ class _HomeScreenState extends State<HomeScreen>
                   if (isManager)
                     _sideItem(context, provider, 'Inventario',
                         Icons.inventory_2_rounded, '/productos', p),
+                  // ✅ NUEVO · Categorías en sidebar
+                  if (isManager)
+                    _sideItem(
+                      context,
+                      provider,
+                      'Categorías',
+                      Icons.category_rounded,
+                      '/categorias',
+                      p,
+                      accent: _C.pink,
+                    ),
                   if (isManager)
                     _sideItem(context, provider, 'Reabastecer',
                         Icons.add_box_rounded, '/reabastecer', p),
@@ -4423,7 +4433,6 @@ class _HomeScreenState extends State<HomeScreen>
               _paymentReminder(provider, true, p),
               const SizedBox(height: 4),
 
-              // ── CHART + RESUMEN
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -4440,11 +4449,9 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const SizedBox(height: 22),
 
-              // ── PANEL TIENDA EN LÍNEA
               _tiendaEnLineaPanel(context, provider, p),
               const SizedBox(height: 22),
 
-              // ── MÁS VENDIDOS (carrusel con imágenes)
               Container(
                 padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
@@ -4521,11 +4528,9 @@ class _HomeScreenState extends State<HomeScreen>
               ),
               const SizedBox(height: 22),
 
-              // ── MÁS ACCIONES
               _moreActionsPanel(context, provider, p),
               const SizedBox(height: 22),
 
-              // ── ESTADO + ACTIVIDAD
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -4555,8 +4560,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ============================================================
-  //  DESKTOP · COMMAND BAR simplificada
-  //  Solo: Venta · Inventario · Historial · Mi tienda · Red Nexora
+  //  DESKTOP · COMMAND BAR
   // ============================================================
   Widget _desktopCommandBar(
       BuildContext context, AppProvider provider, _P p) {
@@ -5844,6 +5848,17 @@ class _HomeScreenState extends State<HomeScreen>
           if (isManager)
             _drawerItem(context, provider, 'Inventario',
                 Icons.inventory_2_rounded, '/productos', p),
+          // ✅ NUEVO · Categorías en drawer
+          if (isManager)
+            _drawerItem(
+              context,
+              provider,
+              'Categorías',
+              Icons.category_rounded,
+              '/categorias',
+              p,
+              accent: _C.pink,
+            ),
           if (isManager)
             _drawerItem(context, provider, 'Reabastecer',
                 Icons.add_box_rounded, '/reabastecer', p),
@@ -6066,6 +6081,48 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 // ============================================================
+//  WIDGET · HOVER TILE (para retoques de hover en desktop)
+// ============================================================
+class _HoverTile extends StatefulWidget {
+  final _P p;
+  final Color color;
+  final VoidCallback onTap;
+  final Widget Function(bool hovered) builder;
+
+  const _HoverTile({
+    Key? key,
+    required this.p,
+    required this.color,
+    required this.onTap,
+    required this.builder,
+  }) : super(key: key);
+
+  @override
+  State<_HoverTile> createState() => _HoverTileState();
+}
+
+class _HoverTileState extends State<_HoverTile> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedScale(
+          duration: const Duration(milliseconds: 160),
+          scale: _hovered ? 1.02 : 1.0,
+          child: widget.builder(_hovered),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
 //  WIDGET · TARJETA DE PRODUCTO TOP (carrusel)
 // ============================================================
 class _ProductTopCard extends StatefulWidget {
@@ -6139,10 +6196,8 @@ class _ProductTopCardState extends State<_ProductTopCard> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                // ─── Imagen del producto
                 _buildImage(p),
 
-                // ─── Overlay gradiente inferior
                 Positioned.fill(
                   child: DecoratedBox(
                     decoration: BoxDecoration(
@@ -6160,14 +6215,12 @@ class _ProductTopCardState extends State<_ProductTopCard> {
                   ),
                 ),
 
-                // ─── Badge de ranking (top-left)
                 Positioned(
                   top: 10,
                   left: 10,
                   child: _rankBadge(esTop),
                 ),
 
-                // ─── Badge de cantidad (top-right)
                 Positioned(
                   top: 10,
                   right: 10,
@@ -6202,7 +6255,6 @@ class _ProductTopCardState extends State<_ProductTopCard> {
                   ),
                 ),
 
-                // ─── Contenido inferior
                 Positioned(
                   left: 12,
                   right: 12,
@@ -6335,7 +6387,6 @@ class _ProductTopCardState extends State<_ProductTopCard> {
     return Image.network(
       url,
       fit: BoxFit.cover,
-      // Fade-in suave cuando carga
       frameBuilder: (ctx, child, frame, wasSyncLoaded) {
         if (wasSyncLoaded) return child;
         return AnimatedOpacity(

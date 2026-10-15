@@ -4,7 +4,7 @@ project(tu_mipyme LANGUAGES CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "tu_mipyme")
+set(BINARY_NAME "nexora_business")
 set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/runner/${CMAKE_BUILD_TYPE}" CACHE PATH "Install path prefix" FORCE)
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent

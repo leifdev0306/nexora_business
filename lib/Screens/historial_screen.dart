@@ -2,6 +2,7 @@
 //  historial_screen.dart  ·  NEXORA BUSINESS
 //  Historial premium con KPIs, agrupación por fecha y detalle
 //  Tema: Azul Eléctrico #1A5CFF + Cyan #06B6D4
+//  ✅ Reactividad blindada + cancelación robusta
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -85,9 +86,8 @@ class _HistorialScreenState extends State<HistorialScreen> {
   String? _sucursalSeleccionada;
   DateTime _fechaInicio = DateTime.now().subtract(const Duration(days: 30));
   DateTime _fechaFin = DateTime.now();
-  bool _mostrarCanceladas = false;
 
-  // ===== NUEVO: selector de período (idéntico a Reportes) =====
+  // ===== Selector de período =====
   String _periodoTipo = 'Mes';
   DateTime _mesSeleccionado = DateTime.now();
   DateTime _anioSeleccionado = DateTime.now();
@@ -99,13 +99,11 @@ class _HistorialScreenState extends State<HistorialScreen> {
   final int _incrementCount = 20;
   final _searchCtrl = TextEditingController();
 
-  bool get _esVendedor =>
-      Provider.of<AppProvider>(context, listen: false).rol == 'vendedor';
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final provider = Provider.of<AppProvider>(context, listen: false);
       final isAdmin = provider.rol == 'admin' || provider.rol == 'dueno';
       if (isAdmin && provider.sucursales.isNotEmpty) {
@@ -113,7 +111,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           _sucursalSeleccionada = provider.sucursales.first.id;
         });
       }
-      if (_esVendedor) {
+      if (provider.rol == 'vendedor') {
         final hoy = DateTime.now();
         setState(() {
           _periodoTipo = 'Hoy';
@@ -137,7 +135,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
       _isAdmin(p) || p.rol == 'gerente' || p.rol == 'gestor';
 
   // ============================================================
-  //  SELECTOR DE PERÍODO (idéntico a Reportes)
+  //  SELECTOR DE PERÍODO
   // ============================================================
   void _aplicarPeriodo(String tipo) {
     final now = DateTime.now();
@@ -149,8 +147,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
           _fechaFin = DateTime(now.year, now.month, now.day, 23, 59, 59);
           break;
         case 'Semana':
-          _fechaInicio =
-              now.subtract(Duration(days: now.weekday - 1));
+          _fechaInicio = now.subtract(Duration(days: now.weekday - 1));
           _fechaInicio = DateTime(
               _fechaInicio.year, _fechaInicio.month, _fechaInicio.day);
           _fechaFin = now;
@@ -253,157 +250,168 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   // ============================================================
-  //  BUILD
+  //  BUILD · envuelto en Consumer para reactividad garantizada
   // ============================================================
   @override
   Widget build(BuildContext context) {
-    final provider = Provider.of<AppProvider>(context);
-    if (!provider.empresaActiva) {
-      return ServicioCanceladoScreen(onLogout: () => provider.logout());
-    }
-
-    final p = _P(Theme.of(context).brightness == Brightness.dark);
-    final isDesktop = ResponsiveHelper.isDesktop();
-    final isAdmin = _isAdmin(provider);
-    final isManager = _isManager(provider);
-    final isVendedor = provider.rol == 'vendedor';
-
-    // Filtrado
-    var ventas = _mostrarCanceladas
-        ? provider.ventasPermitidas.toList()
-        : provider.ventasPermitidas.where((v) => v.costoTotal > 0).toList();
-
-    if (_filtroBusqueda.isNotEmpty) {
-      final q = _filtroBusqueda.toLowerCase().trim();
-      ventas = ventas.where((v) {
-        final nombre = v.productoNombre.toLowerCase();
-        if (nombre.contains(q)) return true;
-        if (v.clienteId != null) {
-          try {
-            final c = provider.clientes
-                .firstWhere((c) => c.id == v.clienteId);
-            if (c.nombre.toLowerCase().contains(q)) return true;
-          } catch (_) {}
+    return Consumer<AppProvider>(
+      builder: (context, provider, _) {
+        if (!provider.empresaActiva) {
+          return ServicioCanceladoScreen(onLogout: () => provider.logout());
         }
-        if (v.metodoPago.toLowerCase().contains(q)) return true;
-        return false;
-      }).toList();
-    }
 
-    if (_filtroMetodo != 'Todos') {
-      ventas = ventas.where((v) => v.metodoPago == _filtroMetodo).toList();
-    }
+        final p = _P(Theme.of(context).brightness == Brightness.dark);
+        final isDesktop = ResponsiveHelper.isDesktop();
+        final isAdmin = _isAdmin(provider);
+        final isManager = _isManager(provider);
+        final isVendedor = provider.rol == 'vendedor';
 
-    if (isAdmin && _sucursalSeleccionada != null) {
-      ventas =
-          ventas.where((v) => v.sucursalId == _sucursalSeleccionada).toList();
-    }
+        // ✅ FIX: siempre usar ventasPermitidas (ya excluye canceladas)
+        //    por doble filtro: estado + ventasCanceladasBox
+        var ventas = provider.ventasPermitidas.toList();
 
-    ventas = ventas
-        .where((v) =>
-            v.fecha.isAfter(_fechaInicio) && v.fecha.isBefore(_fechaFin))
-        .toList();
+        if (_filtroBusqueda.isNotEmpty) {
+          final q = _filtroBusqueda.toLowerCase().trim();
+          ventas = ventas.where((v) {
+            final nombre = v.productoNombre.toLowerCase();
+            if (nombre.contains(q)) return true;
+            if (v.clienteId != null) {
+              try {
+                final c = provider.clientes
+                    .firstWhere((c) => c.id == v.clienteId);
+                if (c.nombre.toLowerCase().contains(q)) return true;
+              } catch (_) {}
+            }
+            if (v.metodoPago.toLowerCase().contains(q)) return true;
+            return false;
+          }).toList();
+        }
 
-    ventas.sort((a, b) => b.fecha.compareTo(a.fecha));
+        if (_filtroMetodo != 'Todos') {
+          ventas =
+              ventas.where((v) => v.metodoPago == _filtroMetodo).toList();
+        }
 
-    final totalVentas = ventas.length;
-    final mostrarMas = totalVentas > _visibleCount;
-    final ventasMostradas = ventas.take(_visibleCount).toList();
+        if (isAdmin && _sucursalSeleccionada != null) {
+          ventas = ventas
+              .where((v) => v.sucursalId == _sucursalSeleccionada)
+              .toList();
+        }
 
-    // KPIs
-    double montoTotal = 0;
-    double gananciaTotal = 0;
-    for (final v in ventas) {
-      montoTotal += v.total;
-      gananciaTotal += (v.total - v.costoTotal);
-    }
-    final double ticketProm =
-        totalVentas > 0 ? montoTotal / totalVentas : 0;
+        ventas = ventas
+            .where((v) =>
+                v.fecha.isAfter(_fechaInicio) && v.fecha.isBefore(_fechaFin))
+            .toList();
 
-    // Agrupación por fecha
-    final grupos = <String, List<Venta>>{};
-    for (final v in ventasMostradas) {
-      final key = _fechaKey(v.fecha);
-      grupos.putIfAbsent(key, () => []).add(v);
-    }
+        ventas.sort((a, b) => b.fecha.compareTo(a.fecha));
 
-    return Scaffold(
-      backgroundColor: p.bg,
-      appBar: _appBar(context, provider, p, isVendedor, isManager),
-      body: Stack(
-        children: [
-          _background(p),
-          RefreshIndicator(
-            onRefresh: () async => setState(() {}),
-            child: CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(
-                  parent: BouncingScrollPhysics()),
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.fromLTRB(
-                        isDesktop ? 24 : 14, 12, isDesktop ? 24 : 14, 0),
-                    child: Column(
-                      children: [
-                        _searchBar(p),
-                        const SizedBox(height: 12),
-                        _periodSelector(context, p, isVendedor),
-                        if (isAdmin) ...[
-                          const SizedBox(height: 10),
-                          _sucursalFilter(context, provider, p),
-                        ],
-                        const SizedBox(height: 14),
-                        _kpiStrip(p, totalVentas, montoTotal, gananciaTotal,
-                            ticketProm, isManager),
-                        const SizedBox(height: 8),
-                      ],
-                    ),
-                  ),
-                ),
-                if (ventasMostradas.isEmpty)
-                  SliverFillRemaining(
-                    hasScrollBody: false,
-                    child: _emptyState(p, isVendedor),
-                  )
-                else ...[
-                  SliverList(
-                    delegate: SliverChildListDelegate(
-                      grupos.entries.map((entry) {
-                        return Padding(
-                          padding: EdgeInsets.fromLTRB(
-                              isDesktop ? 24 : 14,
-                              10,
-                              isDesktop ? 24 : 14,
-                              0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _fechaHeader(context, entry.key, entry.value, p),
-                              const SizedBox(height: 8),
-                              ...entry.value
-                                  .map((v) => _ventaCard(
-                                      context, v, provider, p, isAdmin)),
-                            ],
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  if (mostrarMas)
+        final totalVentas = ventas.length;
+        final mostrarMas = totalVentas > _visibleCount;
+        final ventasMostradas = ventas.take(_visibleCount).toList();
+
+        // KPIs
+        double montoTotal = 0;
+        double gananciaTotal = 0;
+        for (final v in ventas) {
+          montoTotal += v.total;
+          gananciaTotal += (v.total - v.costoTotal);
+        }
+        final double ticketProm =
+            totalVentas > 0 ? montoTotal / totalVentas : 0;
+
+        // Agrupación por fecha
+        final grupos = <String, List<Venta>>{};
+        for (final v in ventasMostradas) {
+          final key = _fechaKey(v.fecha);
+          grupos.putIfAbsent(key, () => []).add(v);
+        }
+
+        return Scaffold(
+          backgroundColor: p.bg,
+          appBar: _appBar(context, provider, p, isVendedor, isManager),
+          body: Stack(
+            children: [
+              _background(p),
+              RefreshIndicator(
+                onRefresh: () async {
+                  await provider.sincronizarManual();
+                  if (mounted) setState(() {});
+                },
+                child: CustomScrollView(
+                  // ✅ FIX: forzar rebuild cuando cambia el conteo de ventas
+                  key: ValueKey(
+                      'hist_${provider.ventasPermitidas.length}_$_visibleCount'),
+                  physics: const AlwaysScrollableScrollPhysics(
+                      parent: BouncingScrollPhysics()),
+                  slivers: [
                     SliverToBoxAdapter(
                       child: Padding(
                         padding: EdgeInsets.fromLTRB(
-                            isDesktop ? 24 : 14, 16, isDesktop ? 24 : 14, 16),
-                        child: _cargarMasButton(p, totalVentas),
+                            isDesktop ? 24 : 14, 12, isDesktop ? 24 : 14, 0),
+                        child: Column(
+                          children: [
+                            _searchBar(p),
+                            const SizedBox(height: 12),
+                            _periodSelector(context, p, isVendedor),
+                            if (isAdmin) ...[
+                              const SizedBox(height: 10),
+                              _sucursalFilter(context, provider, p),
+                            ],
+                            const SizedBox(height: 14),
+                            _kpiStrip(p, totalVentas, montoTotal, gananciaTotal,
+                                ticketProm, isManager),
+                            const SizedBox(height: 8),
+                          ],
+                        ),
                       ),
                     ),
-                  const SliverToBoxAdapter(child: SizedBox(height: 30)),
-                ],
-              ],
-            ),
+                    if (ventasMostradas.isEmpty)
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: _emptyState(p, isVendedor),
+                      )
+                    else ...[
+                      SliverList(
+                        delegate: SliverChildListDelegate(
+                          grupos.entries.map((entry) {
+                            return Padding(
+                              padding: EdgeInsets.fromLTRB(
+                                  isDesktop ? 24 : 14,
+                                  10,
+                                  isDesktop ? 24 : 14,
+                                  0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _fechaHeader(
+                                      context, entry.key, entry.value, p),
+                                  const SizedBox(height: 8),
+                                  ...entry.value.map((v) => _ventaCard(
+                                      context, v, provider, p, isAdmin)),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      ),
+                      if (mostrarMas)
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.fromLTRB(
+                                isDesktop ? 24 : 14, 16, isDesktop ? 24 : 14,
+                                16),
+                            child: _cargarMasButton(p, totalVentas),
+                          ),
+                        ),
+                      const SliverToBoxAdapter(child: SizedBox(height: 30)),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -572,7 +580,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   // ============================================================
-  //  ✅ NUEVO · SELECTOR DE PERÍODO (idéntico a Reportes)
+  //  SELECTOR DE PERÍODO
   // ============================================================
   Widget _periodSelector(BuildContext context, _P p, bool isVendedor) {
     final opciones = isVendedor
@@ -1051,7 +1059,6 @@ class _HistorialScreenState extends State<HistorialScreen> {
     final emailVendedor = provider.getUsuarioEmail(v.usuarioId);
 
     final ganancia = v.total - v.costoTotal;
-    final cancelada = v.estado == 'cancelled' || v.costoTotal <= 0;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -1060,18 +1067,13 @@ class _HistorialScreenState extends State<HistorialScreen> {
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           borderRadius: BorderRadius.circular(16),
-          onTap: () =>
-              _mostrarOpcionesVenta(context, v, provider, p),
+          onTap: () => _mostrarOpcionesVenta(context, v, provider, p),
           child: Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
               color: p.surface,
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: cancelada
-                    ? _C.danger.withOpacity(.35)
-                    : p.border,
-              ),
+              border: Border.all(color: p.border),
               boxShadow: p.shadowSm,
             ),
             child: Row(
@@ -1083,30 +1085,24 @@ class _HistorialScreenState extends State<HistorialScreen> {
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: cancelada
-                          ? [
-                              _C.danger.withOpacity(.22),
-                              _C.danger.withOpacity(.06),
-                            ]
-                          : [
-                              _C.success.withOpacity(.22),
-                              _C.cyan.withOpacity(.06),
-                            ],
+                      colors: [
+                        _C.success.withOpacity(.22),
+                        _C.cyan.withOpacity(.06),
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(13),
                     border: Border.all(
-                      color: (cancelada ? _C.danger : _C.success)
-                          .withOpacity(.24),
+                      color: _C.success.withOpacity(.24),
                     ),
                   ),
                   child: Text(
                     _fmtCant(v.cantidad),
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontWeight: FontWeight.w900,
                       fontSize: 13,
-                      color: cancelada ? _C.danger : _C.success,
+                      color: _C.success,
                     ),
                   ),
                 ),
@@ -1115,42 +1111,18 @@ class _HistorialScreenState extends State<HistorialScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              v.productoNombre,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.2,
-                                color: p.textHigh,
-                              ),
-                            ),
-                          ),
-                          if (cancelada) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: _C.danger.withOpacity(.14),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                'CANCELADA',
-                                style: TextStyle(
-                                  fontSize: 8.5,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.4,
-                                  color: _C.danger,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
+                      Text(
+                        v.productoNombre.isEmpty
+                            ? 'Producto'
+                            : v.productoNombre,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.2,
+                          color: p.textHigh,
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Wrap(
@@ -1211,17 +1183,15 @@ class _HistorialScreenState extends State<HistorialScreen> {
                   children: [
                     Text(
                       '\$${_fmt(v.total)}',
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 14,
                         letterSpacing: -0.3,
-                        color: cancelada ? p.textMuted : _C.success,
-                        decoration:
-                            cancelada ? TextDecoration.lineThrough : null,
+                        color: _C.success,
                       ),
                     ),
                     const SizedBox(height: 2),
-                    if (!cancelada && ganancia != 0)
+                    if (ganancia != 0)
                       Text(
                         '+\$${_fmt(ganancia)}',
                         style: const TextStyle(
@@ -1368,7 +1338,6 @@ class _HistorialScreenState extends State<HistorialScreen> {
         : null;
     final emailVendedor = provider.getUsuarioEmail(venta.usuarioId);
     final ganancia = venta.total - venta.costoTotal;
-    final cancelada = venta.estado == 'cancelled' || venta.costoTotal <= 0;
 
     showModalBottomSheet(
       context: context,
@@ -1405,21 +1374,19 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
                         gradient: LinearGradient(
-                          colors: cancelada
-                              ? [_C.danger.withOpacity(.22), _C.danger.withOpacity(.06)]
-                              : [_C.success.withOpacity(.22), _C.cyan.withOpacity(.06)],
+                          colors: [
+                            _C.success.withOpacity(.22),
+                            _C.cyan.withOpacity(.06),
+                          ],
                         ),
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(
-                          color: (cancelada ? _C.danger : _C.success)
-                              .withOpacity(.24),
+                          color: _C.success.withOpacity(.24),
                         ),
                       ),
-                      child: Icon(
-                        cancelada
-                            ? Icons.cancel_rounded
-                            : Icons.check_circle_rounded,
-                        color: cancelada ? _C.danger : _C.success,
+                      child: const Icon(
+                        Icons.check_circle_rounded,
+                        color: _C.success,
                         size: 24,
                       ),
                     ),
@@ -1428,18 +1395,20 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            cancelada ? 'Venta cancelada' : 'Venta completada',
+                          const Text(
+                            'Venta completada',
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w900,
                               letterSpacing: 0.4,
-                              color: cancelada ? _C.danger : _C.success,
+                              color: _C.success,
                             ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            venta.productoNombre,
+                            venta.productoNombre.isEmpty
+                                ? 'Producto'
+                                : venta.productoNombre,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -1461,17 +1430,13 @@ class _HistorialScreenState extends State<HistorialScreen> {
                 Container(
                   padding: const EdgeInsets.all(16),
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: cancelada
-                          ? [_C.danger.withOpacity(.12), _C.danger.withOpacity(.04)]
-                          : _C.gradBrand,
+                    gradient: const LinearGradient(
+                      colors: _C.gradBrand,
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(16),
-                    boxShadow: cancelada
-                        ? null
-                        : p.glow(_C.primary, o: 0.32),
+                    boxShadow: p.glow(_C.primary, o: 0.32),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1482,9 +1447,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                           fontSize: 9.5,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 1,
-                          color: cancelada
-                              ? p.textMuted
-                              : Colors.white.withOpacity(.85),
+                          color: Colors.white.withOpacity(.85),
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -1493,11 +1456,11 @@ class _HistorialScreenState extends State<HistorialScreen> {
                         alignment: Alignment.centerLeft,
                         child: Text(
                           '\$${_fmt(venta.total)}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 30,
                             fontWeight: FontWeight.w900,
                             letterSpacing: -1,
-                            color: cancelada ? p.textHigh : Colors.white,
+                            color: Colors.white,
                           ),
                         ),
                       ),
@@ -1508,9 +1471,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
                           style: TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w700,
-                            color: cancelada
-                                ? p.textMuted
-                                : Colors.white.withOpacity(.90),
+                            color: Colors.white.withOpacity(.90),
                           ),
                         ),
                       ],
@@ -1520,7 +1481,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
 
                 const SizedBox(height: 16),
 
-                // Detalle grid
+                // Detalle
                 _seccionTitulo('Detalle de la operación', p),
                 const SizedBox(height: 10),
                 _detalleRow(Icons.shopping_bag_rounded, 'Producto',
@@ -1558,51 +1519,49 @@ class _HistorialScreenState extends State<HistorialScreen> {
                 const SizedBox(height: 16),
 
                 // Margen
-                if (!cancelada)
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: (ganancia > 0 ? _C.success : _C.danger)
+                        .withOpacity(p.dark ? .10 : .06),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
                       color: (ganancia > 0 ? _C.success : _C.danger)
-                          .withOpacity(p.dark ? .10 : .06),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: (ganancia > 0 ? _C.success : _C.danger)
-                            .withOpacity(.24),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(
-                          ganancia > 0
-                              ? Icons.trending_up_rounded
-                              : Icons.trending_down_rounded,
-                          size: 18,
-                          color: ganancia > 0 ? _C.success : _C.danger,
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Margen de esta venta',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: p.textMid,
-                            ),
-                          ),
-                        ),
-                        Text(
-                          '\$${_fmt(ganancia)}',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.3,
-                            color:
-                                ganancia > 0 ? _C.success : _C.danger,
-                          ),
-                        ),
-                      ],
+                          .withOpacity(.24),
                     ),
                   ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        ganancia > 0
+                            ? Icons.trending_up_rounded
+                            : Icons.trending_down_rounded,
+                        size: 18,
+                        color: ganancia > 0 ? _C.success : _C.danger,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          'Margen de esta venta',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: p.textMid,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '\$${_fmt(ganancia)}',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.3,
+                          color: ganancia > 0 ? _C.success : _C.danger,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
 
                 const SizedBox(height: 20),
 
@@ -1622,22 +1581,20 @@ class _HistorialScreenState extends State<HistorialScreen> {
                         },
                       ),
                     ),
-                    if (!cancelada) ...[
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _actionButton(
-                          icon: Icons.cancel_rounded,
-                          label: 'Cancelar',
-                          color: _C.danger,
-                          p: p,
-                          onTap: () {
-                            Navigator.pop(ctx);
-                            _cancelarVentaDesdeDialogo(
-                                context, venta, provider);
-                          },
-                        ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _actionButton(
+                        icon: Icons.cancel_rounded,
+                        label: 'Cancelar',
+                        color: _C.danger,
+                        p: p,
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          _cancelarVentaDesdeDialogo(
+                              context, venta, provider);
+                        },
                       ),
-                    ],
+                    ),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -1696,8 +1653,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
             decoration: BoxDecoration(
               color: _C.primary.withOpacity(p.dark ? .14 : .08),
               borderRadius: BorderRadius.circular(9),
-              border:
-                  Border.all(color: _C.primary.withOpacity(.16)),
+              border: Border.all(color: _C.primary.withOpacity(.16)),
             ),
             child: Icon(icon, size: 15, color: _C.primary),
           ),
@@ -1773,7 +1729,7 @@ class _HistorialScreenState extends State<HistorialScreen> {
   }
 
   // ============================================================
-  //  CANCELAR VENTA
+  //  CANCELAR VENTA · robusto ante cualquier escenario
   // ============================================================
   Future<void> _cancelarVentaDesdeDialogo(
       BuildContext context, Venta venta, AppProvider provider) async {
@@ -1833,21 +1789,30 @@ class _HistorialScreenState extends State<HistorialScreen> {
         ],
       ),
     );
-    if (confirm == true) {
-      try {
-        await provider.eliminarVenta(venta.id);
-        if (mounted) {
-          mostrarSnackBar(
-              mensaje: 'Venta cancelada y stock restaurado', esExito: true);
-          setState(() {});
-        }
-      } catch (e) {
-        if (mounted) {
-          mostrarSnackBar(
-              mensaje: 'Error al cancelar: ${mensajeAmigable(e)}',
-              esExito: false);
-        }
-      }
+    if (confirm != true) return;
+
+    try {
+      // provider.eliminarVenta hace todo:
+      //  · restaura stock + lote
+      //  · añade el ID a ventasCanceladasBox
+      //  · elimina inserts pendientes
+      //  · encola delete solo si era server-side
+      //  · llama notifyListeners al final
+      await provider.eliminarVenta(venta.id);
+
+      if (!mounted) return;
+      mostrarSnackBar(
+        mensaje: 'Venta cancelada y stock restaurado',
+        esExito: true,
+      );
+      // setState por si acaso (el Consumer ya se encarga, pero belt-and-suspenders)
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      mostrarSnackBar(
+        mensaje: 'Error al cancelar: ${mensajeAmigable(e)}',
+        esExito: false,
+      );
     }
   }
 
@@ -2010,30 +1975,6 @@ class _HistorialScreenState extends State<HistorialScreen> {
                           }
                         },
                       ),
-                      const SizedBox(height: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: p.surface2,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: SwitchListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            'Mostrar canceladas',
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: p.textHigh,
-                            ),
-                          ),
-                          value: _mostrarCanceladas,
-                          activeColor: _C.primary,
-                          onChanged: (value) =>
-                              setLocal(() => _mostrarCanceladas = value),
-                        ),
-                      ),
                     ] else
                       Padding(
                         padding: const EdgeInsets.only(top: 12),
@@ -2090,7 +2031,6 @@ class _HistorialScreenState extends State<HistorialScreen> {
                       23,
                       59,
                       59);
-                  _mostrarCanceladas = false;
                 }
                 _visibleCount = 20;
               });

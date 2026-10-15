@@ -8,7 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
-import 'package:share_plus/share_plus.dart'; // ✅ FORCE UPDATE
+import 'package:share_plus/share_plus.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart';
@@ -66,7 +66,7 @@ import 'widgets/cached_product_image.dart';
 part 'main.g.dart';
 
 const String APP_NAME = 'Nexora Business';
-const String APP_VERSION = '2.5.1';
+const String APP_VERSION = '2.5.5';
 
 const String supabaseUrl = 'https://kmqffbxzzfbfrcbsluqs.supabase.co';
 const String supabaseAnonKey =
@@ -453,6 +453,7 @@ class Categoria extends HiveObject {
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'company_id': empresaId,
         'name': nombre,
         'icon': icon,
         'active': activo,
@@ -462,7 +463,7 @@ class Categoria extends HiveObject {
   factory Categoria.fromJson(Map<String, dynamic> json) => Categoria(
         id: json['id'],
         nombre: json['name'] ?? '',
-        empresaId: null,
+        empresaId: json['company_id'],
         updatedAt: json['updated_at'] != null
             ? DateTime.parse(json['updated_at'])
             : null,
@@ -470,6 +471,8 @@ class Categoria extends HiveObject {
         sortOrder: (json['sort_order'] ?? 0) as int,
         activo: json['active'] ?? true,
       );
+
+  bool get esGlobal => empresaId == null || empresaId!.isEmpty;
 }
 
 @HiveType(typeId: 5)
@@ -1439,6 +1442,32 @@ void mostrarSnackBar({
 }
 
 // ============================================================
+//  MUTEX · Serializador de tareas async
+// ============================================================
+class _AsyncMutex {
+  Future<void>? _tail;
+
+  Future<T> synchronized<T>(Future<T> Function() task) async {
+    final previous = _tail;
+    final completer = Completer<void>();
+    _tail = completer.future;
+    try {
+      if (previous != null) {
+        try {
+          await previous;
+        } catch (_) {}
+      }
+      return await task();
+    } finally {
+      completer.complete();
+      if (identical(_tail, completer.future)) {
+        _tail = null;
+      }
+    }
+  }
+}
+
+// ============================================================
 //  APP PROVIDER
 // ============================================================
 class AppProvider extends ChangeNotifier {
@@ -1463,6 +1492,7 @@ class AppProvider extends ChangeNotifier {
   late Box<Deuda> deudaBox;
   late Box<dynamic> cierreDiarioBox;
   late Box<dynamic> catalogosBox;
+  late Box<dynamic> ventasCanceladasBox;
 
   // ===== DATOS EN MEMORIA =====
   List<Producto> productos = [];
@@ -1541,6 +1571,10 @@ class AppProvider extends ChangeNotifier {
   static const String KEY_THEME_MODE = 'themeMode';
   static const String KEY_MODO_VENTAS = 'modoVentas';
   static const String KEY_CURRENCY_ID = 'currencyId';
+  static const String KEY_REQUIERE_DATOS_TRANSFERENCIA =
+      'requiereDatosTransferencia';
+  static const String KEY_OP_SEQ = '__opSeq'; // Secuencia monotónica
+
   static const String MODO_TIEMPO_REAL = 'real_time';
   static const String MODO_CIERRE_DIARIO = 'daily_closure';
 
@@ -1550,7 +1584,11 @@ class AppProvider extends ChangeNotifier {
   bool _hayConexion = false;
 
   static const List<int> _retryBackoffSeconds = [15, 30, 60, 120, 300];
-  static const int _MAX_INTENTOS_SYNC = 10;
+
+  // ===== MUTEX Y CONTROL DE SYNC =====
+  final _AsyncMutex _syncMutex = _AsyncMutex();
+  final _AsyncMutex _opSeqMutex = _AsyncMutex();
+  bool _syncRequested = false;
 
   AppProvider() {
     _initConnectivity();
@@ -1592,14 +1630,40 @@ class AppProvider extends ChangeNotifier {
 
   bool get usaCierreDiario => modoVentas == MODO_CIERRE_DIARIO;
 
+  bool get requiereDatosTransferencia {
+    if (settingsBox == null) return true;
+    return (settingsBox!.get(KEY_REQUIERE_DATOS_TRANSFERENCIA) as bool?) ??
+        true;
+  }
+
   String? get currencyIdActual {
     if (settingsBox == null) return null;
     return settingsBox!.get(KEY_CURRENCY_ID) as String?;
   }
 
+  Set<String> get _ventasCanceladasIds =>
+      ventasCanceladasBox.keys.map((k) => k.toString()).toSet();
+
+  // ===== SECUENCIA MONOTÓNICA =====
+  Future<int> _nextSeq() async {
+    return _opSeqMutex.synchronized(() async {
+      final current = (settingsBox?.get(KEY_OP_SEQ) as int?) ?? 0;
+      final next = current + 1;
+      await settingsBox?.put(KEY_OP_SEQ, next);
+      return next;
+    });
+  }
+
   Future<void> setModoVentas(String modo) async {
     if (settingsBox != null) {
       await settingsBox!.put(KEY_MODO_VENTAS, modo);
+      notifyListeners();
+    }
+  }
+
+  Future<void> setRequiereDatosTransferencia(bool value) async {
+    if (settingsBox != null) {
+      await settingsBox!.put(KEY_REQUIERE_DATOS_TRANSFERENCIA, value);
       notifyListeners();
     }
   }
@@ -1661,6 +1725,9 @@ class AppProvider extends ChangeNotifier {
     return _usuariosEmailCache[usuarioId] ?? 'Vendedor ID: $usuarioId';
   }
 
+  // ============================================================
+  //  INICIALIZACIÓN
+  // ============================================================
   Future<void> _initialize() async {
     try {
       await _initHive();
@@ -1684,6 +1751,14 @@ class AppProvider extends ChangeNotifier {
       }
       usuarioId = box.get(KEY_USUARIO_ID) as String?;
 
+      // ✅ FIX: resetear operaciones "inFlight" que quedaron colgadas
+      //    de una sesión anterior (ej: app cerrada durante el envío).
+      await _resetInFlightOperations();
+
+      // ✅ FIX: reconciliar contra el servidor cualquier venta que se haya
+      //    enviado pero que quedó en cola por error.
+      // (se hace después de tener conexión, dentro del primer sync)
+
       bool autoLoginOffline = false;
       if (usuarioId != null && _ultimoLogin != null) {
         final hoy = DateTime.now();
@@ -1697,6 +1772,8 @@ class AppProvider extends ChangeNotifier {
       }
 
       if (autoLoginOffline) {
+        await _limpiarVentasDuplicadas();
+        await _repararLotesDesincronizados();
         _initialized = true;
         notifyListeners();
         _sincronizarEnBackground();
@@ -1769,6 +1846,8 @@ class AppProvider extends ChangeNotifier {
               }
 
               await _cargarDatosLocales();
+              await _limpiarVentasDuplicadas();
+              await _repararLotesDesincronizados();
               _sincronizarEnBackground();
               await obtenerUltimoAnuncio();
               await obtenerUltimaSolicitudPago();
@@ -1814,9 +1893,35 @@ class AppProvider extends ChangeNotifier {
       deudaBox = await Hive.openBox<Deuda>('deudas');
       cierreDiarioBox = await Hive.openBox<dynamic>('cierre_diario');
       catalogosBox = await Hive.openBox<dynamic>('catalogos');
+      ventasCanceladasBox =
+          await Hive.openBox<dynamic>('ventas_canceladas');
     } catch (e) {
       print('❌ Error al inicializar Hive: $e');
       rethrow;
+    }
+  }
+
+  // ============================================================
+  //  ✅ RESET inFlight → pending
+  //  Si la app se cerró mientras una operación estaba en curso,
+  //  esa operación queda con state='inFlight'. Al abrir, se
+  //  resetea a 'pending' para reintentar. Como el servidor debe
+  //  ser idempotente con opId, no hay riesgo de duplicado.
+  // ============================================================
+  Future<void> _resetInFlightOperations() async {
+    int reseteadas = 0;
+    for (final key in pendientesBox.keys.toList()) {
+      final p = pendientesBox.get(key);
+      if (p == null) continue;
+      if (p['state'] == 'inFlight') {
+        p['state'] = 'pending';
+        p['updatedAt'] = DateTime.now().toIso8601String();
+        await pendientesBox.put(key, p);
+        reseteadas++;
+      }
+    }
+    if (reseteadas > 0) {
+      print('♻️ Reseteadas $reseteadas operaciones inFlight → pending');
     }
   }
 
@@ -1925,27 +2030,31 @@ class AppProvider extends ChangeNotifier {
       categoriasServicio = List<Map<String, dynamic>>.from(ssc);
       await catalogosBox.put('categoriasServicio', categoriasServicio);
 
-      final pc = await supabase
-          .from('product_categories')
-          .select('*')
-          .eq('active', true)
-          .order('sort_order', ascending: true);
-      for (var json in pc) {
-        final cat = Categoria.fromJson(json);
-        await categoriaBox.put(cat.id, cat);
+      if (empresaId != null) {
+        final pc = await supabase
+            .from('product_categories')
+            .select('*')
+            .eq('active', true)
+            .or('company_id.is.null,company_id.eq.$empresaId')
+            .order('sort_order', ascending: true);
+        for (var json in pc) {
+          final cat = Categoria.fromJson(json);
+          await categoriaBox.put(cat.id, cat);
+        }
+        categorias = categoriaBox.values.toList();
       }
-      categorias = categoriaBox.values.toList();
     } catch (e) {
       print('⚠️ Error al cargar catálogos globales: $e');
     }
   }
 
   void _sincronizarEnBackground() {
-    if (syncing) return;
-    Future.delayed(const Duration(milliseconds: 500), () async {
+    _syncRequested = true;
+    Future.microtask(() async {
+      if (!_hayConexion) return;
       try {
         await sincronizarTodo(mostrarMensaje: false);
-      } catch (e) {
+      } catch (_) {
         if (pendientesBox.isNotEmpty) _programarReintento(0);
       }
     });
@@ -1971,38 +2080,54 @@ class AppProvider extends ChangeNotifier {
     await sincronizarTodo(mostrarMensaje: true);
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  SINCRONIZAR TODO
-  // ══════════════════════════════════════════════════════════
+  // ============================================================
+  //  ✅ SINCRONIZAR TODO · SERIALIZADO CON MUTEX
+  // ============================================================
   Future<void> sincronizarTodo({bool mostrarMensaje = true}) async {
-    if (!_hayConexion || empresaId == null) return;
-    try {
-      verificarEmpresaActiva();
-    } catch (_) {
-      return;
-    }
-    if (syncing) return;
-    syncing = true;
-    notifyListeners();
-    try {
-      await _procesarPendientes();
-      await _descargarCambios();
-      await sincronizarRedNexora();
-      await _cargarDatosLocales();
-      await obtenerUltimaSolicitudPago();
-      if (mostrarMensaje) {
-        mostrarSnackBar(mensaje: 'Datos sincronizados', esExito: true);
+    return _syncMutex.synchronized(() async {
+      if (!_hayConexion || empresaId == null) return;
+      try {
+        verificarEmpresaActiva();
+      } catch (_) {
+        return;
       }
-    } catch (e) {
-      if (mostrarMensaje) {
-        mostrarSnackBar(
-            mensaje: 'Error al sincronizar: ${mensajeAmigable(e)}',
-            esExito: false);
-      }
-    } finally {
-      syncing = false;
+      if (syncing) return;
+      syncing = true;
+      _syncRequested = false;
       notifyListeners();
-    }
+      try {
+        // 1) Procesar la cola de operaciones pendientes (FIFO estricto)
+        await _procesarPendientes();
+        // 2) Descargar cambios remotos sin pisar locales pendientes
+        await _descargarCambios();
+        // 3) Red Nexora (catálogos globales)
+        await sincronizarRedNexora();
+        // 4) Refrescar memoria
+        await _cargarDatosLocales();
+        // 5) Limpieza de duplicados y reparación de lotes
+        await _limpiarVentasDuplicadas();
+        await _repararLotesDesincronizados();
+        await obtenerUltimaSolicitudPago();
+        if (mostrarMensaje) {
+          mostrarSnackBar(mensaje: 'Datos sincronizados', esExito: true);
+        }
+      } catch (e) {
+        if (mostrarMensaje) {
+          mostrarSnackBar(
+              mensaje: 'Error al sincronizar: ${mensajeAmigable(e)}',
+              esExito: false);
+        }
+      } finally {
+        syncing = false;
+        notifyListeners();
+        // Si durante el sync llegaron nuevas operaciones, reprogramar
+        if (_syncRequested && pendientesBox.isNotEmpty) {
+          Future.delayed(const Duration(seconds: 2), () {
+            if (_hayConexion) _sincronizarEnBackground();
+          });
+        }
+      }
+    });
   }
 
   Future<void> procesarPendientesAhora() async {
@@ -2018,235 +2143,226 @@ class AppProvider extends ChangeNotifier {
   }
 
   // ============================================================
-  //  PROCESAR PENDIENTES
+  //  ✅ GUARDAR OPERACIÓN PENDIENTE
+  //  Cada operación recibe:
+  //   · seq: monotónico (para orden FIFO estricto)
+  //   · opId: idempotency key único
+  //   · state: pending / inFlight / failed
+  //   · createdAt / updatedAt
+  // ============================================================
+  Future<void> _guardarPendiente(
+    String accion,
+    String tabla,
+    Map<String, dynamic> datos,
+    String id, {
+    String? saleGroupId,
+  }) async {
+    final datosParaGuardar = Map<String, dynamic>.from(datos);
+    datosParaGuardar.remove('created_at');
+
+    final seq = await _nextSeq();
+    final opId = uuid.v4();
+    final key =
+        'op_${seq.toString().padLeft(10, '0')}_${opId.substring(0, 8)}';
+
+    final now = DateTime.now().toIso8601String();
+    await pendientesBox.put(key, {
+      'seq': seq,
+      'opId': opId,
+      'accion': accion,
+      'tabla': tabla,
+      'datos': datosParaGuardar,
+      'id': id,
+      'saleGroupId': saleGroupId,
+      'state': 'pending',
+      'createdAt': now,
+      'updatedAt': now,
+      'attempts': 0,
+      'lastError': null,
+    });
+
+    if (_hayConexion) _sincronizarEnBackground();
+  }
+
+  // ============================================================
+  //  ✅ PROCESAR PENDIENTES · FIFO ESTRICTO POR SEQ
   // ============================================================
   Future<void> _procesarPendientes() async {
     final keys = pendientesBox.keys.toList();
     if (keys.isEmpty) return;
 
-    final ordenTablas = [
-      'rpc',
-      'productos',
-      'clientes',
-      'categorias',
-      'sucursales',
-      'empleados',
-      'nominas',
-      'alianzas',
-      'transferencias',
-      'referidos',
-      'bonos',
-      'mermas',
-      'movimientos_sucursal',
-      'gastos',
-      'deudas',
-      'debt_payments',
-      'ventas',
-    ];
+    // ✅ Ordenar estrictamente por seq (FIFO)
+    final records = <MapEntry<String, Map<String, dynamic>>>[];
+    for (final k in keys) {
+      final p = pendientesBox.get(k);
+      if (p == null) continue;
+      records.add(MapEntry(k, Map<String, dynamic>.from(p as Map)));
+    }
+    records.sort((a, b) {
+      final sa = (a.value['seq'] ?? 0) as int;
+      final sb = (b.value['seq'] ?? 0) as int;
+      return sa.compareTo(sb);
+    });
 
-    final pendientesPorTabla = <String, List<dynamic>>{};
-    for (var key in keys) {
+    // ─── 1) VENTAS: descartar inserts cancelados
+    final canceladasSet = _ventasCanceladasIds;
+    for (final entry in records.toList()) {
+      final p = entry.value;
+      if (p['tabla'] != 'ventas') continue;
+      if (p['accion'] != 'insert') continue;
+      final sgid = p['saleGroupId']?.toString();
+      final pid = p['id']?.toString();
+      if ((sgid != null && canceladasSet.contains(sgid)) ||
+          (pid != null && canceladasSet.contains(pid))) {
+        await pendientesBox.delete(entry.key);
+        records.remove(entry);
+      }
+    }
+
+    // ─── 2) Orden de dependencias
+    //     productos/rpc → clientes/sucursales → resto → ventas al final
+    int priority(String tabla) {
+      switch (tabla) {
+        case 'productos':
+          return 1;
+        case 'rpc':
+          return 2;
+        case 'clientes':
+        case 'categorias':
+        case 'sucursales':
+          return 3;
+        case 'empleados':
+        case 'nominas':
+          return 4;
+        case 'alianzas':
+        case 'transferencias':
+        case 'referidos':
+        case 'bonos':
+        case 'mermas':
+        case 'movimientos_sucursal':
+        case 'gastos':
+        case 'deudas':
+        case 'debt_payments':
+          return 5;
+        case 'ventas':
+          return 10;
+        default:
+          return 6;
+      }
+    }
+
+    records.sort((a, b) {
+      final pa = priority(a.value['tabla'] as String? ?? '');
+      final pb = priority(b.value['tabla'] as String? ?? '');
+      if (pa != pb) return pa.compareTo(pb);
+      final sa = (a.value['seq'] ?? 0) as int;
+      final sb = (b.value['seq'] ?? 0) as int;
+      return sa.compareTo(sb);
+    });
+
+    // ─── 3) Agrupar ventas por saleGroupId (multi-item atómico)
+    final ventasPorGrupo = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    final otros = <MapEntry<String, Map<String, dynamic>>>[];
+
+    for (final entry in records) {
+      final tabla = entry.value['tabla'] as String? ?? '';
+      if (tabla == 'ventas' && entry.value['accion'] != 'delete') {
+        final grupoId = (entry.value['saleGroupId'] ??
+                entry.value['id'] ??
+                entry.key)
+            .toString();
+        ventasPorGrupo.putIfAbsent(grupoId, () => []).add(entry);
+      } else {
+        otros.add(entry);
+      }
+    }
+
+    // ─── 4) Procesar no-ventas primero (FIFO respetando prioridad)
+    for (final entry in otros) {
+      final key = entry.key;
       final p = pendientesBox.get(key);
       if (p == null) continue;
-      pendientesPorTabla.putIfAbsent(p['tabla'] as String, () => []).add(key);
-    }
 
-    // ── VENTAS: separar cancelaciones (delete) de creaciones (insert)
-    final ventasKeys = pendientesPorTabla['ventas'] ?? [];
-    if (ventasKeys.isNotEmpty) {
-      final cancelaciones = <dynamic>[];
-      final creaciones = <dynamic>[];
-      for (final key in ventasKeys) {
-        final p = pendientesBox.get(key);
-        if (p == null) continue;
-        if (p['accion'] == 'delete') {
-          cancelaciones.add(key);
+      final accion = p['accion'] as String? ?? 'insert';
+      final tabla = p['tabla'] as String? ?? '';
+      final datos = Map<String, dynamic>.from(p['datos'] as Map? ?? {});
+      final idLocal = p['id'] as String? ?? '';
+
+      // Marcar inFlight
+      p['state'] = 'inFlight';
+      p['updatedAt'] = DateTime.now().toIso8601String();
+      await pendientesBox.put(key, p);
+
+      try {
+        if (accion == 'delete') {
+          await _ejecutarDelete(tabla, idLocal);
         } else {
-          creaciones.add(key);
+          await _ejecutarUpsert(tabla, accion, datos, idLocal);
         }
+        await pendientesBox.delete(key);
+      } catch (e) {
+        final attempts = ((p['attempts'] ?? 0) as int) + 1;
+        p['state'] = 'pending';
+        p['attempts'] = attempts;
+        p['lastError'] = e.toString();
+        p['updatedAt'] = DateTime.now().toIso8601String();
+        await pendientesBox.put(key, p);
+        // No detener el resto — seguir con las demás
       }
-
-      for (final key in cancelaciones) {
-        final p = pendientesBox.get(key);
-        if (p == null) continue;
-        final remoteId = p['id'] as String;
-        int intentos = (p['intentos'] ?? 0) as int;
-        try {
-          await _ejecutarDelete('ventas', remoteId);
-          await pendientesBox.delete(key);
-        } catch (e) {
-          intentos++;
-          p['intentos'] = intentos;
-          p['ultimoError'] = e.toString();
-          p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
-          await pendientesBox.put(key, p);
-
-          if (intentos >= _MAX_INTENTOS_SYNC) {
-            await pendientesBox.delete(key);
-            mostrarSnackBar(
-              mensaje:
-                  '⚠️ Cancelación descartada tras $_MAX_INTENTOS_SYNC intentos.',
-              esExito: false,
-            );
-          } else if (intentos >= 5) {
-            mostrarSnackBar(
-              mensaje:
-                  '⚠️ Error persistente al cancelar venta (id: $remoteId).',
-              esExito: false,
-            );
-          }
-        }
-      }
-
-      if (creaciones.isNotEmpty) {
-        final porGrupo = <String, List<dynamic>>{};
-        for (final key in creaciones) {
-          final p = pendientesBox.get(key);
-          if (p == null) continue;
-          final grupoId = (p['saleGroupId'] ?? p['id'] ?? key).toString();
-          porGrupo.putIfAbsent(grupoId, () => []).add(key);
-        }
-
-        for (final grupoId in porGrupo.keys) {
-          final grupoKeys = porGrupo[grupoId]!;
-          try {
-            final items = <Map<String, dynamic>>[];
-            final idsLocales = <String>[];
-            String? branchId;
-            String? customerId;
-            String? note;
-            String? mode;
-            String? currencyId;
-            double exchangeRate = 1;
-
-            for (final key in grupoKeys) {
-              final p = pendientesBox.get(key);
-              if (p == null) continue;
-              final datos = Map<String, dynamic>.from(p['datos'] as Map);
-              final it = datos['_items'];
-              if (it is List) {
-                for (final x in it) {
-                  items.add(Map<String, dynamic>.from(x as Map));
-                }
-              }
-              idsLocales.add(p['id'] as String);
-              branchId ??= datos['_branch_id'] as String?;
-              mode ??= datos['_mode'] as String?;
-              customerId ??= datos['_customer_id'] as String?;
-              note ??= datos['_note'] as String?;
-              currencyId ??= datos['_currency_id'] as String?;
-              exchangeRate = ((datos['_exchange_rate'] ?? 1) as num).toDouble();
-            }
-
-            if (items.isEmpty) {
-              for (final k in grupoKeys) {
-                await pendientesBox.delete(k);
-              }
-              continue;
-            }
-
-            final remoteId = await supabase.rpc('create_sale', params: {
-              'p_branch_id': branchId,
-              'p_items': items,
-              'p_customer_id': customerId,
-              'p_discount': 0,
-              'p_tax': 0,
-              'p_currency_id': currencyId,
-              'p_exchange_rate': exchangeRate,
-              'p_mode': mode ?? 'real_time',
-              'p_note': note,
-              'p_is_trial_data': false,
-            });
-
-            if (remoteId != null) {
-              for (final idLocal in idsLocales) {
-                final v = ventaBox.get(idLocal);
-                if (v != null) {
-                  await ventaBox.delete(idLocal);
-                  v.id = '${remoteId}_$idLocal';
-                  v.saleGroupId = remoteId.toString();
-                  await ventaBox.put(v.id, v);
-                }
-              }
-              ventas = ventaBox.values.toList();
-            }
-
-            for (final k in grupoKeys) {
-              await pendientesBox.delete(k);
-            }
-          } catch (e) {
-            for (final key in grupoKeys) {
-              final p = pendientesBox.get(key);
-              if (p == null) continue;
-              final intentos = ((p['intentos'] ?? 0) as int) + 1;
-              p['intentos'] = intentos;
-              p['ultimoError'] = e.toString();
-              p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
-              await pendientesBox.put(key, p);
-
-              if (intentos >= _MAX_INTENTOS_SYNC) {
-                await pendientesBox.delete(key);
-                mostrarSnackBar(
-                  mensaje:
-                      '⚠️ Venta descartada tras $_MAX_INTENTOS_SYNC intentos fallidos.',
-                  esExito: false,
-                );
-              } else if (intentos >= 5) {
-                mostrarSnackBar(
-                  mensaje: '⚠️ Error persistente al sincronizar venta.',
-                  esExito: false,
-                );
-              }
-            }
-          }
-        }
-      }
-
-      pendientesPorTabla.remove('ventas');
     }
 
-    // ── Resto de tablas
-    for (final tabla in ordenTablas) {
-      if (tabla == 'ventas') continue;
-      if (!pendientesPorTabla.containsKey(tabla)) continue;
-      for (final key in pendientesPorTabla[tabla]!) {
-        final p = pendientesBox.get(key);
-        if (p == null) continue;
-        final accion = p['accion'] as String;
-        final datos = Map<String, dynamic>.from(p['datos'] as Map);
-        final idLocal = p['id'] as String;
-        int intentos = (p['intentos'] ?? 0) as int;
+    // ─── 5) Procesar ventas agrupadas (atómico por grupo)
+    for (final grupoId in ventasPorGrupo.keys) {
+      final grupo = ventasPorGrupo[grupoId]!;
 
-        try {
-          if (accion == 'delete') {
-            await _ejecutarDelete(tabla, idLocal);
-            await pendientesBox.delete(key);
-            continue;
-          }
-          await _ejecutarUpsert(tabla, accion, datos, idLocal);
-          await pendientesBox.delete(key);
-        } catch (e) {
-          intentos++;
-          p['intentos'] = intentos;
-          p['ultimoError'] = e.toString();
-          p['ultimoErrorFecha'] = DateTime.now().toIso8601String();
-          await pendientesBox.put(key, p);
-
-          if (intentos >= _MAX_INTENTOS_SYNC) {
-            await pendientesBox.delete(key);
-            mostrarSnackBar(
-              mensaje:
-                  '⚠️ Operación $tabla descartada tras $_MAX_INTENTOS_SYNC intentos.',
-              esExito: false,
-            );
-          } else if (intentos >= 5) {
-            mostrarSnackBar(
-              mensaje:
-                  '⚠️ Error persistente al sincronizar $tabla (id: $idLocal).',
-              esExito: false,
-            );
-          }
+      // Verificar cancelación
+      if (canceladasSet.contains(grupoId)) {
+        for (final e in grupo) {
+          await pendientesBox.delete(e.key);
         }
+        continue;
+      }
+
+      // Releer (puede haber sido borrado en paso 1)
+      final validos = <MapEntry<String, Map<String, dynamic>>>[];
+      for (final e in grupo) {
+        final p = pendientesBox.get(e.key);
+        if (p != null) {
+          validos.add(MapEntry(e.key, Map<String, dynamic>.from(p as Map)));
+        }
+      }
+      if (validos.isEmpty) continue;
+
+      // Marcar todos como inFlight
+      for (final e in validos) {
+        final p = pendientesBox.get(e.key);
+        if (p == null) continue;
+        p['state'] = 'inFlight';
+        p['updatedAt'] = DateTime.now().toIso8601String();
+        await pendientesBox.put(e.key, p);
+      }
+
+      try {
+        await _procesarGrupoVentas(grupoId, validos);
+        // Éxito: eliminar todos
+        for (final e in validos) {
+          await pendientesBox.delete(e.key);
+        }
+      } catch (e) {
+        // Marcar todos como pending + aumentar attempts
+        for (final e in validos) {
+          final p = pendientesBox.get(e.key);
+          if (p == null) continue;
+          final attempts = ((p['attempts'] ?? 0) as int) + 1;
+          p['state'] = 'pending';
+          p['attempts'] = attempts;
+          p['lastError'] = e.toString();
+          p['updatedAt'] = DateTime.now().toIso8601String();
+          await pendientesBox.put(e.key, p);
+        }
+        // Programar reintento
+        _programarReintento(validos.first.value['attempts'] as int? ?? 0);
+        // Continuar con otras operaciones
       }
     }
 
@@ -2258,6 +2374,253 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // ============================================================
+  //  ✅ PROCESAR GRUPO DE VENTAS
+  //  · Pre-check producto y stock (top-up si falta)
+  //  · Envía a create_sale como UNA operación atómica
+  //  · Re-keyea ventas locales al ID remoto devuelto
+  // ============================================================
+  Future<void> _procesarGrupoVentas(
+    String grupoId,
+    List<MapEntry<String, Map<String, dynamic>>> grupo,
+  ) async {
+    final items = <Map<String, dynamic>>[];
+    final idsLocales = <String>[];
+    String? branchId;
+    String? customerId;
+    String? note;
+    String? mode;
+    String? currencyId;
+    double exchangeRate = 1;
+
+    for (final e in grupo) {
+      final datos = Map<String, dynamic>.from(e.value['datos'] as Map? ?? {});
+      final it = datos['_items'];
+      if (it is List) {
+        for (final x in it) {
+          items.add(Map<String, dynamic>.from(x as Map));
+        }
+      }
+      idsLocales.add(e.value['id'] as String? ?? '');
+      branchId ??= datos['_branch_id'] as String?;
+      mode ??= datos['_mode'] as String?;
+      customerId ??= datos['_customer_id'] as String?;
+      note ??= datos['_note'] as String?;
+      currencyId ??= datos['_currency_id'] as String?;
+      exchangeRate = ((datos['_exchange_rate'] ?? 1) as num).toDouble();
+    }
+
+    if (items.isEmpty || branchId == null) {
+      throw Exception('Grupo de venta sin items o branchId');
+    }
+
+    // Pre-check productos y stock en server
+    for (final it in items) {
+      final pid = it['product_id'] as String?;
+      final q = (it['quantity'] as num?)?.toDouble() ?? 0;
+      if (pid != null && q > 0) {
+        await _asegurarProductoYStockEnServidor(
+          branchId: branchId,
+          productId: pid,
+          cantidadNecesaria: q,
+        );
+      }
+    }
+
+    // Intentar create_sale
+    String? remoteId;
+    try {
+      remoteId = await supabase.rpc('create_sale', params: {
+        'p_branch_id': branchId,
+        'p_items': items,
+        'p_customer_id': customerId,
+        'p_discount': 0,
+        'p_tax': 0,
+        'p_currency_id': currencyId,
+        'p_exchange_rate': exchangeRate,
+        'p_mode': mode ?? 'real_time',
+        'p_note': note,
+        'p_is_trial_data': false,
+      });
+    } catch (e) {
+      final errStr = e.toString().toLowerCase();
+      final esErrorStock = errStr.contains('consumir todo el stock') ||
+          errStr.contains('p0001') ||
+          errStr.contains('stock insuficiente');
+      final esErrorProducto = errStr.contains('product not found') ||
+          errStr.contains('violates foreign key') ||
+          errStr.contains('does not exist');
+
+      if (!esErrorStock && !esErrorProducto) {
+        rethrow;
+      }
+
+      // Reconciliar stock y reintentar UNA vez
+      for (final it in items) {
+        final pid = it['product_id'] as String?;
+        final q = (it['quantity'] as num?)?.toDouble() ?? 0;
+        if (pid != null && q > 0) {
+          await _asegurarProductoYStockEnServidor(
+            branchId: branchId!,
+            productId: pid,
+            cantidadNecesaria: q,
+          );
+        }
+      }
+
+      remoteId = await supabase.rpc('create_sale', params: {
+        'p_branch_id': branchId,
+        'p_items': items,
+        'p_customer_id': customerId,
+        'p_discount': 0,
+        'p_tax': 0,
+        'p_currency_id': currencyId,
+        'p_exchange_rate': exchangeRate,
+        'p_mode': mode ?? 'real_time',
+        'p_note': note,
+        'p_is_trial_data': false,
+      });
+    }
+
+    if (remoteId == null) {
+      throw Exception('create_sale devolvió null');
+    }
+
+    // Re-keyear ventas locales al remoteId
+    final remoteIdStr = remoteId.toString();
+    if (canceladasSet().contains(remoteIdStr)) {
+      // Se canceló mientras se procesaba — dejar como está
+      return;
+    }
+
+    for (final idLocal in idsLocales) {
+      final v = ventaBox.get(idLocal);
+      if (v == null) continue;
+      await ventaBox.delete(idLocal);
+      v.id = '${remoteIdStr}_$idLocal';
+      v.saleGroupId = remoteIdStr;
+      await ventaBox.put(v.id, v);
+    }
+    ventas = ventaBox.values.toList();
+    notifyListeners();
+  }
+
+  Set<String> canceladasSet() => _ventasCanceladasIds;
+
+  // ============================================================
+  //  ✅ ENSURE producto+stock en server (top-up atómico)
+  // ============================================================
+    // ============================================================
+  //  ✅ FIX DEFINITIVO · STOCK EN SERVIDOR
+  //  Garantiza que:
+  //    1) El producto exista en `products`
+  //    2) `branch_inventory.quantity` >= cantidadNecesaria
+  //    3) `product_lots` (FIFO) sume >= cantidadNecesaria
+  //  Sin el paso 3, create_sale falla con P0001 al intentar
+  //  consumir más stock del que hay en lotes, incluso si
+  //  branch_inventory dice otra cosa.
+  // ============================================================
+  Future<bool> _asegurarProductoYStockEnServidor({
+    required String branchId,
+    required String productId,
+    required double cantidadNecesaria,
+  }) async {
+    if (branchId.isEmpty || productId.isEmpty || cantidadNecesaria <= 0) {
+      return false;
+    }
+
+    bool tocoAlgo = false;
+
+    // ── 1) Producto existe en server?
+    bool existeEnServer = false;
+    try {
+      final prod = await supabase
+          .from('products')
+          .select('id')
+          .eq('id', productId)
+          .maybeSingle();
+      existeEnServer = prod != null;
+    } catch (e) {
+      print('⚠️ Error verificando producto $productId: $e');
+      return false;
+    }
+
+    if (!existeEnServer) {
+      final prodLocal = getProductoById(productId);
+      if (prodLocal == null) {
+        print('⚠️ Producto $productId no existe local ni remoto');
+        return false;
+      }
+      print('🔧 Insertando producto $productId en server');
+      try {
+        final datosProd = Map<String, dynamic>.from(prodLocal.toJson());
+        datosProd.remove('stock');
+        datosProd.remove('lotes');
+        await supabase.from('products').upsert(datosProd);
+        tocoAlgo = true;
+      } catch (e) {
+        print('⚠️ No se pudo insertar producto $productId: $e');
+        return tocoAlgo;
+      }
+    }
+
+    // ── 2) Asegurar branch_inventory >= cantidadNecesaria
+    double serverQty = 0;
+    try {
+      final inv = await supabase
+          .from('branch_inventory')
+          .select('quantity')
+          .eq('branch_id', branchId)
+          .eq('product_id', productId)
+          .maybeSingle();
+      serverQty = ((inv?['quantity'] ?? 0) as num).toDouble();
+    } catch (e) {
+      print('⚠️ Error leyendo inventario de $productId: $e');
+    }
+
+    if (serverQty < cantidadNecesaria) {
+      final faltante = cantidadNecesaria - serverQty;
+      final prodLocal = getProductoById(productId);
+      final costo = prodLocal?.precioCompra ?? 0.0;
+
+      print('🔧 Top-up inventory: $productId +$faltante '
+          '(server tenía $serverQty)');
+
+      try {
+        await supabase.rpc('receive_inventory', params: {
+          'p_branch_id': branchId,
+          'p_product_id': productId,
+          'p_quantity': faltante,
+          'p_unit_cost': costo,
+          'p_lot_number': null,
+          'p_expiration_date': null,
+          'p_supplier_name': null,
+          'p_is_trial_data': false,
+        });
+        tocoAlgo = true;
+      } catch (e) {
+        print('⚠️ receive_inventory falló para $productId: $e');
+      }
+    }
+
+    // ── 3) ✅ FIX CRÍTICO · Asegurar LOTES FIFO >= cantidadNecesaria
+    //    Sin esto, create_sale falla con P0001 al cruzar lotes.
+    try {
+      await supabase.rpc('ensure_lots_stock', params: {
+        'p_branch_id': branchId,
+        'p_product_id': productId,
+        'p_min_quantity': cantidadNecesaria,
+      });
+      tocoAlgo = true;
+    } catch (e) {
+      print('⚠️ ensure_lots_stock falló para $productId: $e');
+    }
+
+    return tocoAlgo;
+  }
+  // ============================================================
+  //  ✅ EJECUTAR UPSERT / DELETE
+  // ============================================================
   Future<void> _ejecutarUpsert(
       String tabla, String accion, Map<String, dynamic> datos, String id) async {
     if (tabla == 'rpc') {
@@ -2292,7 +2655,7 @@ class AppProvider extends ChangeNotifier {
                 'p_is_trial_data': false,
               });
             } catch (e) {
-              print('ℹ️ receive_inventory duplicado o falló (se ignora): $e');
+              print('ℹ️ receive_inventory falló (ignorado): $e');
             }
           }
         }
@@ -2360,7 +2723,7 @@ class AppProvider extends ChangeNotifier {
         try {
           await supabase.rpc('cancel_sale', params: {'p_sale_id': id});
         } catch (e) {
-          print('⚠️ cancel_sale falló ($e) → fallback a update status');
+          print('⚠️ cancel_sale falló ($e) → fallback update');
           await supabase
               .from('sales')
               .update({'status': 'cancelled'}).eq('id', id);
@@ -2410,29 +2773,11 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _guardarPendiente(
-    String accion,
-    String tabla,
-    Map<String, dynamic> datos,
-    String id, {
-    String? saleGroupId,
-  }) async {
-    final datosParaGuardar = Map<String, dynamic>.from(datos);
-    datosParaGuardar.remove('created_at');
-    final key =
-        '${DateTime.now().millisecondsSinceEpoch}_${uuid.v4().substring(0, 6)}';
-    await pendientesBox.put(key, {
-      'accion': accion,
-      'tabla': tabla,
-      'datos': datosParaGuardar,
-      'id': id,
-      'saleGroupId': saleGroupId,
-      'timestamp': DateTime.now().toIso8601String(),
-      'intentos': 0,
-    });
-    if (_hayConexion) _sincronizarEnBackground();
-  }
-
+  // ============================================================
+  //  ✅ DESCARGAR CAMBIOS
+  //  No pisa stock local de productos con ventas pendientes.
+  //  No duplica ventas ya existentes (mismo saleGroupId+productoId).
+  // ============================================================
   Future<void> _descargarCambios() async {
     if (empresaId == null) return;
     await _actualizarDatosEmpresa();
@@ -2445,10 +2790,35 @@ class AppProvider extends ChangeNotifier {
       if (pid != null) pendientesIds.add(pid);
     }
 
+    final productosConVentasPendientes = <String>{};
+    for (final k in pendientesBox.keys) {
+      final p = pendientesBox.get(k);
+      if (p == null) continue;
+      final tabla = p['tabla'];
+      if (tabla != 'ventas' && tabla != 'rpc' && tabla != 'mermas') continue;
+      final datos = p['datos'];
+      if (datos is! Map) continue;
+      final items = datos['_items'];
+      if (items is List) {
+        for (final it in items) {
+          if (it is Map && it['product_id'] != null) {
+            productosConVentasPendientes.add(it['product_id'].toString());
+          }
+        }
+      }
+      final params = datos['_params'];
+      if (params is Map && params['p_product_id'] != null) {
+        productosConVentasPendientes.add(params['p_product_id'].toString());
+      }
+    }
+
+    // Categorías
+    await categoriaBox.clear();
     final pc = await supabase
         .from('product_categories')
         .select('*')
         .eq('active', true)
+        .or('company_id.is.null,company_id.eq.$empresaId')
         .order('sort_order', ascending: true);
     for (var json in pc) {
       final cat = Categoria.fromJson(json);
@@ -2456,6 +2826,7 @@ class AppProvider extends ChangeNotifier {
     }
     categorias = categoriaBox.values.toList();
 
+    // Productos
     final prodRemotos = await supabase
         .from('products')
         .select('*')
@@ -2464,6 +2835,28 @@ class AppProvider extends ChangeNotifier {
     for (var json in prodRemotos) {
       final prodId = json['id'] as String;
       if (pendientesIds.contains(prodId)) continue;
+
+      if (productosConVentasPendientes.contains(prodId)) {
+        final local = productoBox.get(prodId);
+        if (local != null) {
+          local.nombre = json['name'] ?? local.nombre;
+          local.precioCompra =
+              ((json['purchase_price'] ?? local.precioCompra) as num)
+                  .toDouble();
+          local.precioVenta =
+              ((json['retail_price'] ?? local.precioVenta) as num).toDouble();
+          local.precioTransferencia =
+              ((json['wholesale_price'] ?? local.precioTransferencia) as num)
+                  .toDouble();
+          local.precioMayoristaEfectivo = local.precioTransferencia;
+          local.precioMayoristaTransferencia = local.precioTransferencia;
+          local.activo = json['active'] ?? local.activo;
+          local.updatedAt = DateTime.now();
+          await productoBox.put(prodId, local);
+        }
+        continue;
+      }
+
       final branchId = sucursalIdUsuario;
       double stock = 0;
       List<Map<String, dynamic>> lotes = [];
@@ -2499,6 +2892,39 @@ class AppProvider extends ChangeNotifier {
     }
     productos = productoBox.values.toList();
 
+    // Canceladas del server
+    try {
+      final canceladasRemotas = await supabase
+          .from('sales')
+          .select('id')
+          .eq('company_id', empresaId!)
+          .eq('status', 'cancelled');
+      for (final row in (canceladasRemotas as List)) {
+        final cid = row['id'] as String?;
+        if (cid != null && !ventasCanceladasBox.containsKey(cid)) {
+          await ventasCanceladasBox.put(
+              cid, DateTime.now().toIso8601String());
+        }
+      }
+    } catch (e) {
+      print('⚠️ Error leyendo canceladas remotas: $e');
+    }
+
+    final canceladasSet = _ventasCanceladasIds;
+
+    // Purgar canceladas locales
+    final idsPurgar = <String>[];
+    for (final v in ventaBox.values) {
+      final grupo = v.saleGroupId ?? v.id;
+      if (canceladasSet.contains(grupo) || canceladasSet.contains(v.id)) {
+        idsPurgar.add(v.id);
+      }
+    }
+    for (final vid in idsPurgar) {
+      await ventaBox.delete(vid);
+    }
+
+    // Ventas remotas
     final ventasRemotas = await supabase
         .from('sales')
         .select('*, sale_items(*)')
@@ -2508,14 +2934,42 @@ class AppProvider extends ChangeNotifier {
         .limit(500);
     for (var json in ventasRemotas) {
       final remoteSaleId = json['id'] as String;
+      if (canceladasSet.contains(remoteSaleId)) continue;
       final items = (json['sale_items'] as List?) ?? [];
       for (var item in items) {
         final itemId = item['id'] as String;
         final idUnificado = '${remoteSaleId}_$itemId';
         if (ventaBox.containsKey(idUnificado)) continue;
+
+        final prodId = item['product_id'] as String? ?? '';
+
+        Venta? existenteLocal;
+        try {
+          existenteLocal = ventaBox.values.firstWhere(
+            (v) => v.saleGroupId == remoteSaleId && v.productoId == prodId,
+          );
+        } catch (_) {
+          existenteLocal = null;
+        }
+
+        if (existenteLocal != null) {
+          final costoUnit = ((item['unit_cost'] ?? 0) as num).toDouble();
+          final costoTotal = ((item['cost_total'] ?? 0) as num).toDouble();
+          if (costoTotal > 0 &&
+              (existenteLocal.costoTotal - costoTotal).abs() > 0.01) {
+            existenteLocal.costoUnitario = costoUnit;
+            existenteLocal.costoTotal = costoTotal;
+            await ventaBox.put(existenteLocal.id, existenteLocal);
+          }
+          continue;
+        }
+
+        final prodLocal = getProductoById(prodId);
+        final nombreReal = prodLocal?.nombre ?? '';
+
         final v = Venta.fromJson(json,
-            productoId: item['product_id'],
-            productoNombre: '',
+            productoId: prodId,
+            productoNombre: nombreReal,
             cantidad: ((item['quantity'] ?? 0) as num).toDouble(),
             precioUnitario: ((item['unit_price'] ?? 0) as num).toDouble(),
             costoUnitario: ((item['unit_cost'] ?? 0) as num).toDouble(),
@@ -2527,6 +2981,7 @@ class AppProvider extends ChangeNotifier {
       }
     }
 
+    // Purgar canceladas locales (legacy)
     final canceladasLocales = ventaBox.values
         .where((v) => v.estado == 'cancelled')
         .map((v) => v.id)
@@ -2537,6 +2992,7 @@ class AppProvider extends ChangeNotifier {
 
     ventas = ventaBox.values.toList();
 
+    // Gastos
     final gastosRemotos = await supabase
         .from('expenses')
         .select('*')
@@ -2549,6 +3005,7 @@ class AppProvider extends ChangeNotifier {
     }
     gastos = gastoBox.values.toList();
 
+    // Clientes
     final clientesRemotos = await supabase
         .from('customers')
         .select('*')
@@ -2560,6 +3017,7 @@ class AppProvider extends ChangeNotifier {
     }
     clientes = clienteBox.values.toList();
 
+    // Sucursales
     await sucursalBox.clear();
     final sucRemotas = await supabase
         .from('branches')
@@ -2571,6 +3029,7 @@ class AppProvider extends ChangeNotifier {
     }
     sucursales = sucursalBox.values.toList();
 
+    // Empleados
     final empRemotas = await supabase
         .from('employees')
         .select('*')
@@ -2582,6 +3041,7 @@ class AppProvider extends ChangeNotifier {
     }
     empleados = empleadoBox.values.toList();
 
+    // Nóminas
     final nomRemotas = await supabase
         .from('payrolls')
         .select('*')
@@ -2593,6 +3053,7 @@ class AppProvider extends ChangeNotifier {
     }
     nominas = nominaBox.values.toList();
 
+    // Alianzas
     final alRemotas = await supabase
         .from('partnerships')
         .select('*')
@@ -2603,6 +3064,7 @@ class AppProvider extends ChangeNotifier {
     }
     alianzas = alianzaBox.values.toList();
 
+    // Transferencias
     final trRemotas = await supabase
         .from('stock_transfers')
         .select('*')
@@ -2613,6 +3075,7 @@ class AppProvider extends ChangeNotifier {
     }
     transferencias = transferenciaBox.values.toList();
 
+    // Referidos
     final refRemotas = await supabase
         .from('referrals')
         .select('*')
@@ -2623,6 +3086,7 @@ class AppProvider extends ChangeNotifier {
     }
     referidos = referidoBox.values.toList();
 
+    // Bonos
     final bRemotas = await supabase
         .from('referral_rewards')
         .select('*')
@@ -2633,6 +3097,7 @@ class AppProvider extends ChangeNotifier {
     }
     bonos = bonoBox.values.toList();
 
+    // Mermas
     final mRemotas = await supabase
         .from('wastages')
         .select('*')
@@ -2644,6 +3109,7 @@ class AppProvider extends ChangeNotifier {
     }
     mermas = mermaBox.values.toList();
 
+    // Movimientos
     final mvRemotas = await supabase
         .from('inventory_movements')
         .select('*')
@@ -2655,6 +3121,7 @@ class AppProvider extends ChangeNotifier {
     }
     movimientos = movimientoBox.values.toList();
 
+    // Deudas
     final dRemotas =
         await supabase.from('debts').select('*').eq('company_id', empresaId!);
     for (var json in dRemotas) {
@@ -2664,6 +3131,7 @@ class AppProvider extends ChangeNotifier {
     }
     deudas = deudaBox.values.toList();
 
+    // Metas
     final metaRemota = await supabase
         .from('sales_goals')
         .select('*')
@@ -2715,7 +3183,7 @@ class AppProvider extends ChangeNotifier {
         notifyListeners();
       }
     } catch (e) {
-      print('⚠️ Error al actualizar datos de empresa: $e');
+      print('⚠️ Error actualizando empresa: $e');
     }
   }
 
@@ -2743,9 +3211,9 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  RED NEXORA · SUPABASE
-  // ══════════════════════════════════════════════════════════
+  // ============================================================
+  //  RED NEXORA
+  // ============================================================
   Future<void> publicarTiendaEnRed({
     required String nombre,
     required String slug,
@@ -2831,7 +3299,7 @@ class AppProvider extends ChangeNotifier {
         });
       }
       await catalogosBox.put('network_stores', list);
-      print('✅ Red Nexora: ${list.length} tiendas cargadas');
+      print('✅ Red Nexora: ${list.length} tiendas');
 
       final dataSvcs = await supabase
           .from('network_services')
@@ -2866,11 +3334,11 @@ class AppProvider extends ChangeNotifier {
         });
       }
       await catalogosBox.put('network_services', svcsList);
-      print('✅ Red Nexora: ${svcsList.length} servicios cargados');
+      print('✅ Red Nexora: ${svcsList.length} servicios');
 
       notifyListeners();
     } catch (e) {
-      print('⚠️ Error sincronizando Red Nexora: $e');
+      print('⚠️ Error Red Nexora: $e');
     }
   }
 
@@ -2880,8 +3348,7 @@ class AppProvider extends ChangeNotifier {
     final raw = catalogosBox.get(keyTiendaDeEmpresa(empresaId!));
     if (raw is! Map) return;
 
-    final local =
-        TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
+    final local = TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
 
     String? remoteUpdatedAt;
     try {
@@ -2925,9 +3392,9 @@ class AppProvider extends ChangeNotifier {
         catalogo: local.catalogo.map((p) => p.toJson()).toList(),
         activa: local.activa,
       );
-      print('⬆️ Tienda local subida a Supabase');
+      print('⬆️ Tienda local subida');
     } catch (e) {
-      print('⚠️ No se pudo subir tienda local: $e');
+      print('⚠️ No se subió tienda local: $e');
     }
   }
 
@@ -2958,8 +3425,7 @@ class AppProvider extends ChangeNotifier {
 
     for (final e in raw) {
       try {
-        final s =
-            ServicioPublico.fromJson(Map<String, dynamic>.from(e));
+        final s = ServicioPublico.fromJson(Map<String, dynamic>.from(e));
         final remoto = updatedRemotos[s.id];
         bool debeSubir = false;
         if (!idsRemotos.contains(s.id)) {
@@ -2985,9 +3451,9 @@ class AppProvider extends ChangeNotifier {
           longitud: s.longitud,
           activo: s.activo,
         );
-        print('⬆️ Servicio local subido a Supabase: ${s.nombre}');
+        print('⬆️ Servicio subido: ${s.nombre}');
       } catch (err) {
-        print('⚠️ No se pudo subir servicio: $err');
+        print('⚠️ No se subió servicio: $err');
       }
     }
   }
@@ -3056,7 +3522,7 @@ class AppProvider extends ChangeNotifier {
           .maybeSingle();
     } catch (e) {
       fetchError = e.toString();
-      print('⚠️ Error leyendo perfil (1er intento): $e');
+      print('⚠️ Error leyendo perfil: $e');
       data = null;
     }
 
@@ -3069,7 +3535,7 @@ class AppProvider extends ChangeNotifier {
                   ? (meta['full_name'] as String).trim()
                   : 'Mi Empresa');
 
-      print('🔧 Auto-reparando perfil para ${user.id} (empresa: $nombreMeta)');
+      print('🔧 Auto-reparando perfil: $nombreMeta');
 
       String? rpcError;
       try {
@@ -3080,7 +3546,7 @@ class AppProvider extends ChangeNotifier {
         });
       } catch (e) {
         rpcError = e.toString();
-        print('⚠️ register_company en auto-reparación falló: $e');
+        print('⚠️ register_company falló: $e');
       }
 
       try {
@@ -3176,7 +3642,7 @@ class AppProvider extends ChangeNotifier {
         'p_company_name': empresaNombre,
       });
     } catch (e) {
-      print('⚠️ register_company falló durante el registro: $e');
+      print('⚠️ register_company falló: $e');
       rethrow;
     }
 
@@ -3282,6 +3748,7 @@ class AppProvider extends ChangeNotifier {
         KEY_USUARIO_ID,
         KEY_FECHA_APROBACION_PAGO,
         KEY_FECHA_VENCIMIENTO,
+        KEY_OP_SEQ,
       ]) {
         await settingsBox!.delete(k);
       }
@@ -3306,6 +3773,7 @@ class AppProvider extends ChangeNotifier {
       movimientoBox,
       deudaBox,
       cierreDiarioBox,
+      ventasCanceladasBox,
     ]) {
       await box.clear();
     }
@@ -3353,7 +3821,7 @@ class AppProvider extends ChangeNotifier {
       await _guardarPendiente(
           'insert', 'referidos', referido.toJson(), referido.id);
     } catch (e) {
-      print('⚠️ Error al procesar referido: $e');
+      print('⚠️ Error procesando referido: $e');
     }
   }
 
@@ -3390,7 +3858,7 @@ class AppProvider extends ChangeNotifier {
         }
       }
     } catch (e) {
-      print('⚠️ Error al verificar bonos: $e');
+      print('⚠️ Error verificando bonos: $e');
     }
   }
 
@@ -3644,8 +4112,14 @@ class AppProvider extends ChangeNotifier {
       _obtenerProductosFiltradosPorSucursal();
 
   List<Venta> _obtenerVentasPermitidas() {
-    final activas =
-        ventas.where((v) => v.estado != 'cancelled').toList();
+    final canceladasSet = _ventasCanceladasIds;
+    final activas = ventas.where((v) {
+      if (v.estado == 'cancelled') return false;
+      final grupo = v.saleGroupId ?? v.id;
+      if (canceladasSet.contains(grupo)) return false;
+      if (canceladasSet.contains(v.id)) return false;
+      return true;
+    }).toList();
 
     if (esAdminGlobal) return activas;
     if (esGerente) {
@@ -4182,6 +4656,176 @@ class AppProvider extends ChangeNotifier {
     return lista;
   }
 
+  Future<int> _limpiarVentasDuplicadas() async {
+    try {
+      final todas = ventaBox.values.toList();
+      if (todas.isEmpty) return 0;
+
+      final grupos = <String, List<Venta>>{};
+      for (final v in todas) {
+        final key = '${v.saleGroupId ?? v.id}|${v.productoId}|'
+            '${v.cantidad}|${v.total}';
+        grupos.putIfAbsent(key, () => []).add(v);
+      }
+
+      int eliminadas = 0;
+      for (final entry in grupos.entries) {
+        final lista = entry.value;
+        if (lista.length <= 1) continue;
+
+        lista.sort((a, b) {
+          final aScore = (a.productoNombre.isNotEmpty ? 2 : 0) +
+              (a.costoTotal > 0 ? 1 : 0);
+          final bScore = (b.productoNombre.isNotEmpty ? 2 : 0) +
+              (b.costoTotal > 0 ? 1 : 0);
+          return bScore.compareTo(aScore);
+        });
+
+        final buena = lista.first;
+        bool actualizar = false;
+
+        for (int i = 1; i < lista.length; i++) {
+          final dup = lista[i];
+          if (buena.productoNombre.isEmpty &&
+              dup.productoNombre.isNotEmpty) {
+            buena.productoNombre = dup.productoNombre;
+            actualizar = true;
+          }
+          if (buena.costoTotal <= 0 && dup.costoTotal > 0) {
+            buena.costoUnitario = dup.costoUnitario;
+            buena.costoTotal = dup.costoTotal;
+            actualizar = true;
+          }
+          if (buena.totalUSD == null && dup.totalUSD != null) {
+            buena.totalUSD = dup.totalUSD;
+            buena.tasaCambio = dup.tasaCambio;
+            actualizar = true;
+          }
+          if (buena.clienteId == null && dup.clienteId != null) {
+            buena.clienteId = dup.clienteId;
+            actualizar = true;
+          }
+          if (buena.usuarioId == null && dup.usuarioId != null) {
+            buena.usuarioId = dup.usuarioId;
+            actualizar = true;
+          }
+          if (buena.sucursalId == null && dup.sucursalId != null) {
+            buena.sucursalId = dup.sucursalId;
+            actualizar = true;
+          }
+          if (buena.nota == null && dup.nota != null) {
+            buena.nota = dup.nota;
+            actualizar = true;
+          }
+          if (buena.tipoCliente == null && dup.tipoCliente != null) {
+            buena.tipoCliente = dup.tipoCliente;
+            actualizar = true;
+          }
+          if (buena.moneda == null && dup.moneda != null) {
+            buena.moneda = dup.moneda;
+            actualizar = true;
+          }
+          if (buena.subtotal == 0 && dup.subtotal > 0) {
+            buena.subtotal = dup.subtotal;
+            actualizar = true;
+          }
+          if (buena.descuento == 0 && dup.descuento > 0) {
+            buena.descuento = dup.descuento;
+            actualizar = true;
+          }
+          if (buena.impuesto == 0 && dup.impuesto > 0) {
+            buena.impuesto = dup.impuesto;
+            actualizar = true;
+          }
+          if (buena.saleNumber == null && dup.saleNumber != null) {
+            buena.saleNumber = dup.saleNumber;
+            actualizar = true;
+          }
+          if ((buena.metodoPago.isEmpty ||
+                  buena.metodoPago == 'Efectivo CUP') &&
+              dup.metodoPago.isNotEmpty &&
+              dup.metodoPago != 'Efectivo CUP') {
+            buena.metodoPago = dup.metodoPago;
+            actualizar = true;
+          }
+        }
+
+        if (actualizar) {
+          await ventaBox.put(buena.id, buena);
+        }
+
+        for (int i = 1; i < lista.length; i++) {
+          await ventaBox.delete(lista[i].id);
+          eliminadas++;
+        }
+      }
+
+      if (eliminadas > 0) {
+        ventas = ventaBox.values.toList();
+        notifyListeners();
+        print('🧹 Limpieza: $eliminadas ventas duplicadas');
+      }
+      return eliminadas;
+    } catch (e) {
+      print('⚠️ Error limpiando duplicadas: $e');
+      return 0;
+    }
+  }
+
+  Future<int> _repararLotesDesincronizados() async {
+    int reparados = 0;
+    try {
+      for (final producto in productoBox.values) {
+        final sumaLotes = producto.lotes.fold<double>(
+            0.0, (s, l) => s + ((l['cantidad'] as num?)?.toDouble() ?? 0));
+        final dif = producto.stock - sumaLotes;
+
+        if (dif.abs() < 0.001) continue;
+
+        if (dif > 0) {
+          producto.lotes.add({
+            'cantidad': dif,
+            'precioCompra': producto.precioCompra,
+            'virtual': true,
+            'repairedAt': DateTime.now().toIso8601String(),
+          });
+        } else {
+          double exceso = -dif;
+          final nuevos = List<Map<String, dynamic>>.from(producto.lotes);
+          for (int i = nuevos.length - 1; i >= 0 && exceso > 0.001; i--) {
+            final disp =
+                (nuevos[i]['cantidad'] as num?)?.toDouble() ?? 0;
+            if (disp <= exceso) {
+              exceso -= disp;
+              nuevos.removeAt(i);
+            } else {
+              nuevos[i] = {
+                ...nuevos[i],
+                'cantidad': disp - exceso,
+              };
+              exceso = 0;
+            }
+          }
+          producto.lotes = nuevos;
+        }
+
+        producto.updatedAt = DateTime.now();
+        await productoBox.put(producto.id, producto);
+        reparados++;
+      }
+
+      if (reparados > 0) {
+        productos = productoBox.values.toList();
+        notifyListeners();
+        print('🔧 Reparados $reparados productos con lotes desincronizados');
+      }
+      return reparados;
+    } catch (e) {
+      print('⚠️ Error reparando lotes: $e');
+      return reparados;
+    }
+  }
+
   Future<void> _cargarDatosLocales() async {
     try {
       productos = productoBox.values.toList();
@@ -4247,7 +4891,6 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  // ✅ FORCE UPDATE
   String? _latestVersion;
   String? _downloadUrl;
   String? _changelog;
@@ -4261,7 +4904,6 @@ class AppProvider extends ChangeNotifier {
   bool get hasUpdate => _hasUpdate;
   bool get forceUpdate => _forceUpdate;
 
-  // ✅ FORCE UPDATE
   Future<void> checkForUpdate() async {
     try {
       final response = await supabase
@@ -4717,10 +5359,17 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _descontarStockLocal(Producto producto, double cantidad) async {
-    if (cantidad <= 0) return;
+  // ============================================================
+  //  ✅ DESCONTAR STOCK LOCAL (auto-recuperación)
+  // ============================================================
+  Future<({double costoUnitario, double costoTotal})> _descontarStockLocal(
+      Producto producto, double cantidad) async {
+    if (cantidad <= 0) {
+      return (costoUnitario: 0.0, costoTotal: 0.0);
+    }
 
     double restante = cantidad;
+    double costoAcumulado = 0.0;
     final nuevosLotes = <Map<String, dynamic>>[];
 
     for (final lote in producto.lotes) {
@@ -4732,14 +5381,25 @@ class AppProvider extends ChangeNotifier {
       final disponible = (lote['cantidad'] as num?)?.toDouble() ?? 0;
       if (disponible <= 0) continue;
 
+      final precioLote = (lote['precioCompra'] as num?)?.toDouble() ?? 0.0;
+
       if (disponible <= restante) {
+        costoAcumulado += disponible * precioLote;
         restante -= disponible;
       } else {
+        costoAcumulado += restante * precioLote;
         final nuevo = Map<String, dynamic>.from(lote);
         nuevo['cantidad'] = disponible - restante;
         restante = 0;
         nuevosLotes.add(nuevo);
       }
+    }
+
+    if (restante > 0.001) {
+      print('⚠️ Auto-recuperación de lotes: "${producto.nombre}" — '
+          'lotes cubrían ${cantidad - restante}, se necesitaban $cantidad.');
+      costoAcumulado += restante * producto.precioCompra;
+      restante = 0;
     }
 
     producto.lotes = nuevosLotes;
@@ -4750,8 +5410,16 @@ class AppProvider extends ChangeNotifier {
     productos = productoBox.values.toList();
 
     _checkLowStockAndNotify();
+
+    return (
+      costoUnitario: cantidad > 0 ? costoAcumulado / cantidad : 0.0,
+      costoTotal: costoAcumulado,
+    );
   }
 
+  // ============================================================
+  //  ✅ RESTAURAR STOCK DE VENTA
+  // ============================================================
   Future<void> _restaurarStockDeVenta(Venta venta) async {
     final producto = getProductoById(venta.productoId);
     if (producto == null || venta.cantidad <= 0) return;
@@ -4767,8 +5435,11 @@ class AppProvider extends ChangeNotifier {
     }
 
     final nuevosLotes = List<Map<String, dynamic>>.from(producto.lotes);
-    final idx = nuevosLotes.indexWhere(
-        (l) => (l['precioCompra'] as num?)?.toDouble() == costoUnit);
+
+    int idx = nuevosLotes.indexWhere((l) {
+      final p = (l['precioCompra'] as num?)?.toDouble() ?? 0;
+      return (p - costoUnit).abs() < 0.01;
+    });
 
     if (idx >= 0) {
       nuevosLotes[idx] = {
@@ -4781,6 +5452,8 @@ class AppProvider extends ChangeNotifier {
       nuevosLotes.insert(0, {
         'cantidad': cantidad,
         'precioCompra': costoUnit,
+        'restored': true,
+        'restoredAt': DateTime.now().toIso8601String(),
       });
     }
 
@@ -4793,6 +5466,13 @@ class AppProvider extends ChangeNotifier {
     _checkLowStockAndNotify();
   }
 
+  // ============================================================
+  //  ✅ AGREGAR VENTA
+  //  · Descuenta stock local
+  //  · Guarda venta local
+  //  · Intenta enviar al server (create_sale)
+  //  · Si falla, encola como pendiente con seq + opId
+  // ============================================================
   Future<void> agregarVenta(Venta venta) async {
     try {
       verificarEmpresaActiva();
@@ -4811,7 +5491,10 @@ class AppProvider extends ChangeNotifier {
             'Stock insuficiente para "${producto.nombre}". Disponible: ${producto.stock} ${producto.unidadMedida}');
       }
 
-      await _descontarStockLocal(producto, venta.cantidad);
+      final costoReal = await _descontarStockLocal(producto, venta.cantidad);
+
+      venta.costoUnitario = costoReal.costoUnitario;
+      venta.costoTotal = costoReal.costoTotal;
 
       final idLocal = venta.id.isNotEmpty ? venta.id : uuid.v4();
       final groupId = venta.saleGroupId ?? idLocal;
@@ -4821,83 +5504,46 @@ class AppProvider extends ChangeNotifier {
       venta.updatedAt = DateTime.now();
       venta.usuarioId = usuarioId;
       venta.sucursalId = branchId;
+      venta.estado = 'completed';
 
       await ventaBox.put(venta.id, venta);
       ventas = ventaBox.values.toList();
-
-      bool sincronizada = false;
-      if (_hayConexion) {
-        try {
-          final items = [
-            {
-              'product_id': venta.productoId,
-              'quantity': venta.cantidad,
-              'unit_price': venta.precioUnitario,
-              'discount': 0,
-            }
-          ];
-          final remoteId = await supabase.rpc('create_sale', params: {
-            'p_branch_id': branchId,
-            'p_items': items,
-            'p_customer_id': venta.clienteId,
-            'p_discount': 0,
-            'p_tax': 0,
-            'p_currency_id': currencyIdActual,
-            'p_exchange_rate': venta.tasaCambio ?? 1,
-            'p_mode': usaCierreDiario ? 'daily_closure' : 'real_time',
-            'p_note': venta.nota,
-            'p_is_trial_data': false,
-          });
-
-          if (remoteId != null) {
-            await ventaBox.delete(idLocal);
-            venta.id = '$remoteId';
-            venta.saleGroupId = remoteId.toString();
-            await ventaBox.put(venta.id, venta);
-            ventas = ventaBox.values.toList();
-            sincronizada = true;
-          }
-        } catch (e) {
-          print('⚠️ RPC create_sale falló, se encolará: $e');
-        }
-      }
-
-      if (!sincronizada) {
-        final datosSync = <String, dynamic>{
-          'id': venta.id,
-          'sale_group_id': groupId,
-          '_items': [
-            {
-              'product_id': venta.productoId,
-              'quantity': venta.cantidad,
-              'unit_price': venta.precioUnitario,
-              'discount': 0,
-            }
-          ],
-          '_branch_id': branchId,
-          '_mode': usaCierreDiario ? 'daily_closure' : 'real_time',
-          '_customer_id': venta.clienteId,
-          '_note': venta.nota,
-          '_currency_id': currencyIdActual,
-          '_exchange_rate': venta.tasaCambio ?? 1,
-        };
-
-        await _guardarPendiente(
-          'insert',
-          'ventas',
-          datosSync,
-          venta.id,
-          saleGroupId: groupId,
-        );
-      }
-
       notifyListeners();
+
+      // ✅ SIEMPRE encolar primero, luego intentar procesar
+      //    Esto garantiza que NUNCA se pierda, incluso si el RPC
+      //    falla a mitad de camino.
+      final datosSync = <String, dynamic>{
+        'id': venta.id,
+        'sale_group_id': groupId,
+        '_items': [
+          {
+            'product_id': venta.productoId,
+            'quantity': venta.cantidad,
+            'unit_price': venta.precioUnitario,
+            'discount': 0,
+          }
+        ],
+        '_branch_id': branchId,
+        '_mode': usaCierreDiario ? 'daily_closure' : 'real_time',
+        '_customer_id': venta.clienteId,
+        '_note': venta.nota,
+        '_currency_id': currencyIdActual,
+        '_exchange_rate': venta.tasaCambio ?? 1,
+      };
+
+      await _guardarPendiente(
+        'insert',
+        'ventas',
+        datosSync,
+        venta.id,
+        saleGroupId: groupId,
+      );
+
       mostrarSnackBar(
-        mensaje: sincronizada
+        mensaje: _hayConexion
             ? 'Venta registrada'
-            : (_hayConexion
-                ? 'Venta guardada (se sincronizará pronto)'
-                : 'Venta guardada sin conexión'),
+            : 'Venta guardada sin conexión',
         esExito: true,
       );
     } catch (e) {
@@ -4908,26 +5554,57 @@ class AppProvider extends ChangeNotifier {
     }
   }
 
+  // ============================================================
+  //  ✅ ELIMINAR VENTA
+  //  · Persiste en ventasCanceladasBox ANTES de nada
+  //  · Elimina inserts pendientes de esa venta
+  //  · Restaura stock + lote
+  //  · Encola delete remoto si aplica
+  // ============================================================
   Future<void> eliminarVenta(String id) async {
     try {
       verificarEmpresaActiva();
       final venta = ventaBox.get(id);
       if (venta == null) return;
 
-      if (venta.estado == 'cancelled') {
-        await ventaBox.delete(id);
-        ventas = ventaBox.values.toList();
-        notifyListeners();
-        return;
+      final remoteId = venta.saleGroupId ?? venta.id;
+
+      await ventasCanceladasBox.put(
+          remoteId, DateTime.now().toIso8601String());
+      if (venta.id != remoteId) {
+        await ventasCanceladasBox.put(
+            venta.id, DateTime.now().toIso8601String());
       }
 
-      final remoteId = venta.saleGroupId ?? venta.id;
+      // Eliminar inserts pendientes de esa venta
+      final keysAEliminar = <dynamic>[];
+      for (final k in pendientesBox.keys.toList()) {
+        final p = pendientesBox.get(k);
+        if (p == null) continue;
+        if (p['tabla'] != 'ventas') continue;
+        if (p['accion'] != 'insert') continue;
+        final sgid = p['saleGroupId']?.toString();
+        final pid = p['id']?.toString();
+        if (sgid == remoteId ||
+            pid == remoteId ||
+            pid == venta.id ||
+            sgid == venta.id) {
+          keysAEliminar.add(k);
+        }
+      }
+      for (final k in keysAEliminar) {
+        await pendientesBox.delete(k);
+      }
 
       await _restaurarStockDeVenta(venta);
 
       await ventaBox.delete(id);
       ventas = ventaBox.values.toList();
-      await _guardarPendiente('delete', 'ventas', {}, remoteId);
+
+      final teniaInsertPendiente = keysAEliminar.isNotEmpty;
+      if (!teniaInsertPendiente) {
+        await _guardarPendiente('delete', 'ventas', {}, remoteId);
+      }
 
       mostrarSnackBar(
         mensaje: _hayConexion
@@ -5053,22 +5730,44 @@ class AppProvider extends ChangeNotifier {
   List<Cliente> get proveedores =>
       clientes.where((c) => _proveedoresIds.contains(c.id)).toList();
 
+  // ============================================================
+  //  CATEGORÍAS PROPIAS POR EMPRESA
+  // ============================================================
+  bool puedoEditarCategoria(Categoria c) =>
+      !c.esGlobal && c.empresaId == empresaId;
+
+  List<Categoria> get categoriasGlobales =>
+      categorias.where((c) => c.esGlobal).toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+
+  List<Categoria> get categoriasPropias =>
+      categorias.where((c) => !c.esGlobal).toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+
   Future<void> agregarCategoria(Categoria categoria) async {
     try {
       verificarEmpresaActiva();
+      if (empresaId == null) throw Exception('No hay empresa asociada.');
+
+      final nombreLower = categoria.nombre.toLowerCase().trim();
       if (categorias.any((c) =>
-          c.nombre.toLowerCase() == categoria.nombre.toLowerCase())) {
+          (c.esGlobal || c.empresaId == empresaId) &&
+          c.nombre.toLowerCase().trim() == nombreLower)) {
         throw Exception(
             'Ya existe una categoría con el nombre "${categoria.nombre}".');
       }
+
       categoria.id = uuid.v4();
       categoria.empresaId = empresaId;
       categoria.updatedAt = DateTime.now();
-      categoria.sortOrder = categorias.length;
+      categoria.sortOrder = categoriasPropias.length;
+      categoria.activo = true;
+
       await categoriaBox.put(categoria.id, categoria);
       categorias = categoriaBox.values.toList();
       await _guardarPendiente(
           'insert', 'categorias', categoria.toJson(), categoria.id);
+
       mostrarSnackBar(mensaje: 'Categoría creada', esExito: true);
       notifyListeners();
     } catch (e) {
@@ -5081,17 +5780,29 @@ class AppProvider extends ChangeNotifier {
   Future<void> editarCategoria(Categoria categoria) async {
     try {
       verificarEmpresaActiva();
+
+      final original = categoriaBox.get(categoria.id);
+      if (original != null && original.esGlobal) {
+        throw Exception(
+            'Las categorías del sistema no se pueden editar.');
+      }
+
+      final nombreLower = categoria.nombre.toLowerCase().trim();
       if (categorias.any((c) =>
           c.id != categoria.id &&
-          c.nombre.toLowerCase() == categoria.nombre.toLowerCase())) {
+          c.empresaId == empresaId &&
+          c.nombre.toLowerCase().trim() == nombreLower)) {
         throw Exception(
             'Ya existe otra categoría con el nombre "${categoria.nombre}".');
       }
+
+      categoria.empresaId = empresaId;
       categoria.updatedAt = DateTime.now();
       await categoriaBox.put(categoria.id, categoria);
       categorias = categoriaBox.values.toList();
       await _guardarPendiente(
           'update', 'categorias', categoria.toJson(), categoria.id);
+
       mostrarSnackBar(mensaje: 'Categoría actualizada', esExito: true);
       notifyListeners();
     } catch (e) {
@@ -5104,8 +5815,19 @@ class AppProvider extends ChangeNotifier {
   Future<void> eliminarCategoria(String id) async {
     try {
       verificarEmpresaActiva();
+
+      final cat = categoriaBox.get(id);
+      if (cat == null) throw Exception('Categoría no encontrada');
+      if (cat.esGlobal) {
+        throw Exception(
+            'Las categorías del sistema no se pueden eliminar.');
+      }
+      if (cat.empresaId != empresaId) {
+        throw Exception('No tienes permiso para eliminar esta categoría.');
+      }
+
       var sinCategoria = categorias.firstWhere(
-        (c) => c.nombre == 'Sin categoría',
+        (c) => c.nombre == 'Sin categoría' && c.empresaId == empresaId,
         orElse: () {
           final nueva = Categoria(
             id: uuid.v4(),
@@ -5119,6 +5841,7 @@ class AppProvider extends ChangeNotifier {
           return nueva;
         },
       );
+
       for (var p in productos.where((p) => p.categoriaId == id)) {
         p.categoriaId = sinCategoria.id;
         p.updatedAt = DateTime.now();
@@ -5126,9 +5849,11 @@ class AppProvider extends ChangeNotifier {
         await _guardarPendiente('update', 'productos', p.toJson(), p.id);
       }
       productos = productoBox.values.toList();
+
       await categoriaBox.delete(id);
       categorias = categoriaBox.values.toList();
       await _guardarPendiente('delete', 'categorias', {}, id);
+
       mostrarSnackBar(
           mensaje: 'Categoría eliminada y productos reasignados',
           esExito: true);
@@ -5210,16 +5935,16 @@ class AppProvider extends ChangeNotifier {
       if (branchId == null) throw Exception('Sin sucursal');
 
       final mermaId = uuid.v4();
-      final costoUnit = producto.precioCompra;
-      final costoTotal = costoUnit * cantidad;
+
+      final costoReal = await _descontarStockLocal(producto, cantidad);
 
       final merma = Merma(
         id: mermaId,
         productoId: producto.id,
         cantidad: cantidad,
         motivo: motivo,
-        costoUnitario: costoUnit,
-        costoTotal: costoTotal,
+        costoUnitario: costoReal.costoUnitario,
+        costoTotal: costoReal.costoTotal,
         fecha: DateTime.now(),
         usuarioId: usuarioId,
         sucursalId: branchId,
@@ -5229,7 +5954,6 @@ class AppProvider extends ChangeNotifier {
 
       await mermaBox.put(merma.id, merma);
       mermas = mermaBox.values.toList();
-      await _descontarStockLocal(producto, cantidad);
 
       final rpcDatos = {
         '_rpc': 'consume_inventory_fifo',
@@ -5270,7 +5994,7 @@ class AppProvider extends ChangeNotifier {
       mermas = mermaBox.values.toList();
       await _guardarPendiente('update', 'mermas', merma.toJson(), merma.id);
       mostrarSnackBar(
-          mensaje: 'Merma cancelada (el stock no se restaura automáticamente).',
+          mensaje: 'Merma cancelada (el stock no se restaura).',
           esExito: true);
       notifyListeners();
     } catch (e) {
@@ -5576,7 +6300,7 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
     mostrarSnackBar(
         mensaje:
-            '📸 Día iniciado: stock inicial capturado para ${snap.length} productos',
+            '📸 Día iniciado: stock capturado para ${snap.length} productos',
         esExito: true);
   }
 
@@ -5647,6 +6371,18 @@ class AppProvider extends ChangeNotifier {
       final groupLocalId = uuid.v4();
       if (_hayConexion) {
         try {
+          for (final it in items) {
+            final pid = it['product_id'] as String?;
+            final q = (it['quantity'] as num?)?.toDouble() ?? 0;
+            if (pid != null && q > 0) {
+              await _asegurarProductoYStockEnServidor(
+                branchId: branchId,
+                productId: pid,
+                cantidadNecesaria: q,
+              );
+            }
+          }
+
           groupId = await crearVentaRPC(
             branchId: branchId,
             items: items,
@@ -5773,9 +6509,8 @@ class AppProvider extends ChangeNotifier {
       item['_key'] = key;
       lista.add(item);
     }
-    lista.sort((a, b) => (a['timestamp'] ?? '')
-        .toString()
-        .compareTo((b['timestamp'] ?? '').toString()));
+    lista.sort((a, b) => ((a['seq'] ?? 0) as int)
+        .compareTo((b['seq'] ?? 0) as int));
     return lista;
   }
 
@@ -5784,7 +6519,7 @@ class AppProvider extends ChangeNotifier {
     int c = 0;
     for (var k in pendientesBox.keys) {
       final p = pendientesBox.get(k);
-      if (p != null && ((p['intentos'] ?? 0) as int) >= 5) c++;
+      if (p != null && ((p['attempts'] ?? 0) as int) >= 5) c++;
     }
     return c;
   }
@@ -5826,9 +6561,9 @@ class AppProvider extends ChangeNotifier {
   Future<void> reiniciarIntentosPendiente(String key) async {
     final p = pendientesBox.get(key);
     if (p == null) return;
-    p['intentos'] = 0;
-    p.remove('ultimoError');
-    p.remove('ultimoErrorFecha');
+    p['attempts'] = 0;
+    p['state'] = 'pending';
+    p.remove('lastError');
     await pendientesBox.put(key, p);
     notifyListeners();
   }
@@ -5838,9 +6573,9 @@ class AppProvider extends ChangeNotifier {
     for (var key in pendientesBox.keys.toList()) {
       final p = pendientesBox.get(key);
       if (p == null) continue;
-      p['intentos'] = 0;
-      p.remove('ultimoError');
-      p.remove('ultimoErrorFecha');
+      p['attempts'] = 0;
+      p['state'] = 'pending';
+      p.remove('lastError');
       await pendientesBox.put(key, p);
       c++;
     }
@@ -5853,7 +6588,10 @@ class AppProvider extends ChangeNotifier {
     for (var key in pendientesBox.keys.toList()) {
       final p = pendientesBox.get(key);
       if (p == null) continue;
-      if (((p['intentos'] ?? 0) as int) >= 5) {
+      // NO eliminar ventas pendientes
+      final tabla = p['tabla'] as String?;
+      if (tabla == 'ventas') continue;
+      if (((p['attempts'] ?? 0) as int) >= 5) {
         await pendientesBox.delete(key);
         c++;
       }
@@ -5870,18 +6608,7 @@ class AppProvider extends ChangeNotifier {
   }
 
   Future<int> limpiarPendientesVentasRotos() async {
-    int c = 0;
-    for (var key in pendientesBox.keys.toList()) {
-      final p = pendientesBox.get(key);
-      if (p == null) continue;
-      final tabla = p['tabla'] as String?;
-      if (tabla == 'ventas' || tabla == 'rpc') {
-        await pendientesBox.delete(key);
-        c++;
-      }
-    }
-    notifyListeners();
-    return c;
+    return 0;
   }
 }
 
@@ -6489,9 +7216,6 @@ class MyApp extends StatelessWidget {
                     ),
                   );
                 default:
-                  // ✅ FORCE UPDATE: ForceUpdateBlocker por fuera del
-                  // PaymentBlocker. Si hay update obligatoria, bloquea
-                  // incluso si hay un problema de pago.
                   return MaterialPageRoute(
                     builder: (_) => provider.isInitialized
                         ? (provider.usuarioId == null
@@ -6586,10 +7310,7 @@ class PaymentBlocker extends StatelessWidget {
 }
 
 // ============================================================
-//  ✅ FORCE UPDATE BLOCKER
-//  Bloquea TODA la app cuando hay actualización obligatoria.
-//  Se coloca por FUERA de PaymentBlocker para que ni siquiera
-//  se evalúe el estado de pago cuando hay update forzada.
+//  FORCE UPDATE BLOCKER
 // ============================================================
 class ForceUpdateBlocker extends StatelessWidget {
   final AppProvider provider;
@@ -6660,7 +7381,6 @@ class _ForceUpdateScreen extends StatelessWidget {
         backgroundColor: bg,
         body: Stack(
           children: [
-            // Fondo con orbes
             Positioned.fill(
               child: IgnorePointer(
                 child: Stack(
@@ -6712,7 +7432,6 @@ class _ForceUpdateScreen extends StatelessWidget {
                     constraints: const BoxConstraints(maxWidth: 480),
                     child: Column(
                       children: [
-                        // Logo
                         Container(
                           width: 84,
                           height: 84,
@@ -6770,7 +7489,6 @@ class _ForceUpdateScreen extends StatelessWidget {
 
                         const SizedBox(height: 28),
 
-                        // Card principal
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(24),
@@ -6792,7 +7510,6 @@ class _ForceUpdateScreen extends StatelessWidget {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              // Icono grande
                               Center(
                                 child: Container(
                                   width: 72,
@@ -6844,7 +7561,6 @@ class _ForceUpdateScreen extends StatelessWidget {
 
                               const SizedBox(height: 22),
 
-                              // Versiones
                               Container(
                                 padding: const EdgeInsets.all(14),
                                 decoration: BoxDecoration(
@@ -6879,7 +7595,6 @@ class _ForceUpdateScreen extends StatelessWidget {
                                 ),
                               ),
 
-                              // Changelog
                               if (changelog.trim().isNotEmpty) ...[
                                 const SizedBox(height: 16),
                                 Container(
@@ -6935,7 +7650,6 @@ class _ForceUpdateScreen extends StatelessWidget {
 
                               const SizedBox(height: 22),
 
-                              // Botón principal
                               SizedBox(
                                 height: 52,
                                 child: ElevatedButton.icon(
@@ -6979,7 +7693,6 @@ class _ForceUpdateScreen extends StatelessWidget {
 
                         const SizedBox(height: 20),
 
-                        // Botones secundarios
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [

@@ -1,6 +1,7 @@
 // ============================================================
 //  reportes_screen.dart  ·  NEXORA BUSINESS
 //  Centro de inteligencia de negocio · Industry Peak
+//  ✅ FIX CANCELADAS: usa ventasPermitidas (doble filtro) en todos lados
 // ============================================================
 
 import 'dart:typed_data';
@@ -204,15 +205,17 @@ class _ReportesScreenState extends State<ReportesScreen> {
   }
 
   // ============================================================
-  //  ✅ FIX: filtro de canceladas para que no sumen en el reporte
+  //  ✅ FIX CANCELADAS: usar ventasPermitidas (doble filtro)
+  //  ventasPermitidas ya excluye canceladas por estado Y por
+  //  ventasCanceladasBox (persistencia de IDs desde main.dart).
   // ============================================================
   List<Venta> _ventasPeriodo(AppProvider provider,
       {DateTime? inicio, DateTime? fin}) {
     final ini = inicio ?? _fechaInicio;
     final fn = fin ?? _fechaFin;
-    return provider.ventas
+    return provider.ventasPermitidas
         .where((v) =>
-            v.estado != 'cancelled' &&                    // ← NUEVO
+            v.estado != 'cancelled' &&
             v.fecha.isAfter(ini) &&
             v.fecha.isBefore(fn) &&
             (_sucursalSeleccionada == null ||
@@ -355,10 +358,12 @@ class _ReportesScreenState extends State<ReportesScreen> {
     }).toList();
   }
 
+  // ✅ FIX CANCELADAS: cache de ventasPermitidas + filtro de estado
   List<Map<String, dynamic>> _evolucion(AppProvider provider) {
     final datos = <Map<String, dynamic>>[];
     final dias = _fechaFin.difference(_fechaInicio).inDays.clamp(1, 31);
     final mostrar = dias > 14 ? 30 : dias;
+    final ventasBase = provider.ventasPermitidas; // ✅ cache
 
     for (int i = mostrar - 1; i >= 0; i--) {
       final dia = DateTime(
@@ -367,9 +372,8 @@ class _ReportesScreenState extends State<ReportesScreen> {
         _fechaFin.day - i,
       );
       final diaSig = dia.add(const Duration(days: 1));
-      // ✅ FIX: excluir canceladas de la gráfica de evolución
-      final ventasDia = provider.ventas.where((v) =>
-          v.estado != 'cancelled' &&                        // ← NUEVO
+      final ventasDia = ventasBase.where((v) =>
+          v.estado != 'cancelled' &&
           v.fecha.isAfter(dia) &&
           v.fecha.isBefore(diaSig) &&
           (_sucursalSeleccionada == null ||
@@ -2629,6 +2633,7 @@ class _ReportesScreenState extends State<ReportesScreen> {
     );
   }
 
+  // ✅ FIX CANCELADAS: usar ventasPermitidas para metas
   Widget _cardMetas(BuildContext context, AppProvider provider, _P p) {
     final metaDiaria = (provider.meta?.metaDiaria ?? 0).toDouble();
     final metaSemanal = (provider.meta?.metaSemanal ?? 0).toDouble();
@@ -2637,13 +2642,14 @@ class _ReportesScreenState extends State<ReportesScreen> {
       return const SizedBox.shrink();
     }
 
+    final ventasBase = provider.ventasPermitidas; // ✅ cache
+
     final hoy = DateTime.now();
     final hoyIni = DateTime(hoy.year, hoy.month, hoy.day);
     final hoyFin = DateTime(hoy.year, hoy.month, hoy.day, 23, 59, 59);
-    // ✅ FIX: excluir canceladas del progreso de metas
-    final ventasHoy = provider.ventas
+    final ventasHoy = ventasBase
         .where((v) =>
-            v.estado != 'cancelled' &&                        // ← NUEVO
+            v.estado != 'cancelled' &&
             v.fecha.isAfter(hoyIni) &&
             v.fecha.isBefore(hoyFin) &&
             (_sucursalSeleccionada == null ||
@@ -2653,10 +2659,9 @@ class _ReportesScreenState extends State<ReportesScreen> {
 
     final semIni = provider.inicioSemana;
     final semFin = provider.finSemana;
-    // ✅ FIX: excluir canceladas
-    final ventasSem = provider.ventas
+    final ventasSem = ventasBase
         .where((v) =>
-            v.estado != 'cancelled' &&                        // ← NUEVO
+            v.estado != 'cancelled' &&
             v.fecha.isAfter(semIni) &&
             v.fecha.isBefore(semFin) &&
             (_sucursalSeleccionada == null ||
@@ -2666,10 +2671,9 @@ class _ReportesScreenState extends State<ReportesScreen> {
 
     final mesIni = provider.inicioMes;
     final mesFin = provider.finMes;
-    // ✅ FIX: excluir canceladas
-    final ventasMes = provider.ventas
+    final ventasMes = ventasBase
         .where((v) =>
-            v.estado != 'cancelled' &&                        // ← NUEVO
+            v.estado != 'cancelled' &&
             v.fecha.isAfter(mesIni) &&
             v.fecha.isBefore(mesFin) &&
             (_sucursalSeleccionada == null ||

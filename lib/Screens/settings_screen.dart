@@ -150,6 +150,13 @@ class _SettingsScreenState extends State<SettingsScreen>
                       const SizedBox(height: 12),
                       _salesMode(provider, p, isDesktop),
                       const SizedBox(height: 26),
+                      // ✅ NUEVO: sección de datos de transferencia
+                      _sectionTitle(p, Icons.receipt_long_rounded,
+                          'Datos de transferencia',
+                          'Configura si se solicitan los datos del cliente en pagos por transferencia.'),
+                      const SizedBox(height: 12),
+                      _transferDataCard(provider, p),
+                      const SizedBox(height: 26),
                       _sectionTitle(p, Icons.cloud_sync_rounded,
                           'Sincronización',
                           'Revisa el estado de la cola de operaciones pendientes.'),
@@ -648,6 +655,113 @@ class _SettingsScreenState extends State<SettingsScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  // ============================================================
+  //  ✅ NUEVO · TRANSFER DATA CARD
+  // ============================================================
+  Widget _transferDataCard(AppProvider provider, _P p) {
+    final requiere = provider.requiereDatosTransferencia;
+    final color = requiere ? _C.primary : _C.textMuted;
+
+    return _card(
+      p,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      color.withOpacity(.22),
+                      color.withOpacity(.06),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: color.withOpacity(.24)),
+                ),
+                child: Icon(
+                  requiere
+                      ? Icons.assignment_ind_rounded
+                      : Icons.person_off_rounded,
+                  color: color,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Datos del cliente en transferencias',
+                      style: TextStyle(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.2,
+                        color: p.textHigh,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      requiere
+                          ? 'Se solicita nombre, carnet, teléfono y nº de transferencia.'
+                          : 'Los pagos por transferencia se registran sin datos del cliente.',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: p.textMuted,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Switch(
+                value: requiere,
+                onChanged: (v) =>
+                    provider.setRequiereDatosTransferencia(v),
+                activeColor: _C.primary,
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: p.surface2,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: p.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.info_outline_rounded,
+                    size: 15, color: p.textMuted),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    requiere
+                        ? 'Útil cuando necesitas conciliar las transferencias con los datos del remitente.'
+                        : 'Actívalo solo si necesitas conciliar transferencias con los datos del cliente.',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.4,
+                      color: p.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

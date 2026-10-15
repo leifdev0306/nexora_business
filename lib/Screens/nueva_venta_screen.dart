@@ -5,6 +5,10 @@
 //  · Grid desktop compacto: 5/6/7 columnas
 //  · Paleta azul eléctrico + cyan
 //  · Atajos: Ctrl+K (buscar), F12 / Ctrl+Enter (cobrar), Esc
+//  · ✅ Datos de transferencia opcionales (config. en Settings)
+//  · ✅ NUEVO: Categorías en desktop y móvil
+//     · Solo se muestran categorías que tienen productos
+//     · Picker móvil: bottom sheet con búsqueda + categorías + grid
 // ============================================================
 
 import 'dart:async';
@@ -221,6 +225,32 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           .toList();
     }
     return provider.productosPorSucursal;
+  }
+
+  // ============================================================
+  //  ✅ CATEGORÍAS CON PRODUCTOS (multi-sucursal aware)
+  //  Devuelve SOLO las categorías que tienen al menos un producto
+  //  en la sucursal activa, ordenadas por sortOrder.
+  // ============================================================
+  List<String> _categoriasConProductos(AppProvider provider) {
+    final base = _getProductosDisponibles(provider);
+
+    final idsConProducto = <String>{};
+    for (final p in base) {
+      if (p.categoriaId != null && p.categoriaId!.isNotEmpty) {
+        idsConProducto.add(p.categoriaId!);
+      }
+    }
+
+    if (idsConProducto.isEmpty) return const [];
+
+    // Mantener el orden definido por la empresa (sortOrder ascendente).
+    final orden = provider.categorias
+        .where((c) => idsConProducto.contains(c.id))
+        .toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+
+    return orden.map((c) => c.id).toList();
   }
 
   Future<void> _seleccionarProducto(
@@ -445,16 +475,39 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     _repeticionTimer = null;
   }
 
-  Future<void> _agregarProductoRapido(BuildContext context) async {
-    ItemVenta item;
-    if (_items.isEmpty || _items.last.productoId == null) {
-      if (_items.isEmpty) _agregarItem();
-      item = _items.last;
-    } else {
-      _agregarItem();
-      item = _items.last;
+  // ============================================================
+  //  ✅ NUEVO FLUJO MÓVIL · PICKER CON CATEGORÍAS
+  // ============================================================
+  Future<void> _abrirPickerProductos(
+    BuildContext context, {
+    String? categoriaInicial,
+  }) async {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    if (!provider.empresaActiva) {
+      mostrarSnackBar(mensaje: 'Servicio cancelado', esExito: false);
+      return;
     }
-    await _seleccionarProducto(item, context);
+
+    final seleccionado = await showModalBottomSheet<Producto?>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ProductPickerSheet(
+        provider: provider,
+        metodoPago: _metodoPago,
+        sucursalId: provider.esAdminGlobal ? _sucursalIdSeleccionada : null,
+        categoriaInicial: categoriaInicial,
+      ),
+    );
+
+    if (seleccionado != null) {
+      _agregarProductoDirecto(seleccionado);
+    }
+  }
+
+  Future<void> _agregarProductoRapido(BuildContext context) async {
+    await _abrirPickerProductos(context);
   }
 
   // ============================================================
@@ -499,24 +552,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       return a.nombre.compareTo(b.nombre);
     });
     return productos;
-  }
-
-  List<String> _categoriasDesktop(AppProvider provider) {
-    List<Producto> base;
-    if (provider.esAdminGlobal && _sucursalIdSeleccionada != null) {
-      base = provider.productos
-          .where((p) => p.sucursalId == _sucursalIdSeleccionada)
-          .toList();
-    } else {
-      base = provider.productosPorSucursal;
-    }
-    final cats = <String>{};
-    for (final p in base) {
-      if (p.categoriaId != null && p.categoriaId!.isNotEmpty) {
-        cats.add(p.categoriaId!);
-      }
-    }
-    return cats.toList();
   }
 
   void _limpiarVenta() {
@@ -907,11 +942,11 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CATALOG DESKTOP
+  // ─── CATALOG DESKTOP (con categorías)
   Widget _desktopCatalog(
       BuildContext context, AppProvider provider, _P p) {
     final productos = _productosDesktop(provider);
-    final categorias = _categoriasDesktop(provider);
+    final categorias = _categoriasConProductos(provider); // ✅ Solo con productos
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
@@ -984,44 +1019,39 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           ),
           const SizedBox(height: 12),
 
-          SizedBox(
-            height: 36,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              children: [
-                _categoryChip(
-                  label: 'Todos',
-                  selected: _categoriaSeleccionada == null,
-                  onTap: () =>
-                      setState(() => _categoriaSeleccionada = null),
-                  p: p,
-                ),
-                ...categorias.map(
-                  (id) => _categoryChip(
-                    label: provider.getNombreCategoria(id),
-                    selected: _categoriaSeleccionada == id,
+          // ✅ Chips de categoría (solo las que tienen productos)
+          if (categorias.isNotEmpty)
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  _categoryChip(
+                    label: 'Todos',
+                    selected: _categoriaSeleccionada == null,
                     onTap: () =>
-                        setState(() => _categoriaSeleccionada = id),
+                        setState(() => _categoriaSeleccionada = null),
                     p: p,
                   ),
-                ),
-              ],
+                  ...categorias.map(
+                    (id) => _categoryChip(
+                      label: provider.getNombreCategoria(id),
+                      selected: _categoriaSeleccionada == id,
+                      onTap: () =>
+                          setState(() => _categoriaSeleccionada = id),
+                      p: p,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
+          if (categorias.isNotEmpty) const SizedBox(height: 12),
 
           Expanded(
             child: productos.isEmpty
                 ? _emptyCatalog(p)
                 : LayoutBuilder(
                     builder: (context, constraints) {
-                      // Tarjetas compactas:
-                      //   7 cols ≥ 1700px
-                      //   6 cols ≥ 1450px
-                      //   5 cols ≥ 1150px
-                      //   4 cols ≥  880px
-                      //   3 cols ≥  620px
-                      //   2 cols <  620px
                       final cols = constraints.maxWidth >= 1700
                           ? 7
                           : (constraints.maxWidth >= 1450
@@ -1101,7 +1131,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── PRODUCT CARD DESKTOP (compacta)
+  // ─── PRODUCT CARD DESKTOP
   Widget _productCardDesktop(
     BuildContext context,
     Producto producto,
@@ -1411,7 +1441,8 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             ),
           ),
 
-          if (_necesitaTransferencia) _transferFormDesktop(p),
+          if (_necesitaTransferencia && provider.requiereDatosTransferencia)
+            _transferFormDesktop(p),
 
           if (_mostrarNotaDesktop)
             Padding(
@@ -1487,7 +1518,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           ),
         ),
         child: Theme(
-          data: Theme.of(_dummyContext()).copyWith(
+          data: Theme.of(context).copyWith(
             dividerColor: Colors.transparent,
           ),
           child: ExpansionTile(
@@ -1617,8 +1648,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       ),
     );
   }
-
-  BuildContext _dummyContext() => navigatorKey.currentContext!;
 
   Widget _miniField(
     TextEditingController ctrl,
@@ -2093,10 +2122,11 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       body: Column(
         children: [
           _mobileConfigBar(context, provider, p),
-          if (_necesitaTransferencia) _mobileTransferBanner(context, p),
+          if (_necesitaTransferencia && provider.requiereDatosTransferencia)
+            _mobileTransferBanner(context, p),
           Expanded(
-            child: _items.isEmpty
-                ? _mobileEmptyCart(p)
+            child: _productosEnCarrito == 0
+                ? _mobileEmptyCart(context, provider, p)
                 : ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -2304,7 +2334,9 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  Widget _mobileEmptyCart(_P p) {
+  // ✅ NUEVO: Empty state con botón directo al picker
+  Widget _mobileEmptyCart(
+      BuildContext context, AppProvider provider, _P p) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(28),
@@ -2332,9 +2364,31 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Toca "Agregar producto" para empezar la venta.',
+              'Agrega productos para comenzar la venta.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13, color: p.textMuted),
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              width: 220,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: () => _abrirPickerProductos(context),
+                icon: const Icon(Icons.add_rounded, size: 20),
+                label: const Text(
+                  'Agregar producto',
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w900),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _C.primary,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
             ),
           ],
         ),
@@ -2424,7 +2478,9 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             Row(
               children: [
                 GestureDetector(
-                  onTap: () => _seleccionarProducto(item, context),
+                  onTap: () => _abrirPickerProductos(
+                    context,
+                  ),
                   child: hasProduct
                       ? CachedProductImage(
                           url: producto.imageUrl,
@@ -2455,7 +2511,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => _seleccionarProducto(item, context),
+                    onTap: () => _abrirPickerProductos(context),
                     behavior: HitTestBehavior.opaque,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -3386,13 +3442,15 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   }
 
   // ============================================================
-  //  REGISTRO DE VENTA
+  //  ✅ REGISTRO DE VENTA
   // ============================================================
   Future<void> _registrarVenta() async {
     if (_isSaving) return;
     setState(() => _isSaving = true);
 
     try {
+      final provider = Provider.of<AppProvider>(context, listen: false);
+
       for (final item in _items) {
         if (item.productoId == null ||
             item.cantidad <= 0 ||
@@ -3413,7 +3471,9 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
         setState(() => _isSaving = false);
         return;
       }
-      if (_necesitaTransferencia) {
+
+      if (_necesitaTransferencia &&
+          provider.requiereDatosTransferencia) {
         if (_nombreCtrl.text.trim().isEmpty ||
             _ciCtrl.text.trim().isEmpty ||
             _telefonoCtrl.text.trim().isEmpty ||
@@ -3427,7 +3487,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
         }
       }
 
-      final provider = Provider.of<AppProvider>(context, listen: false);
       if (!provider.empresaActiva) {
         mostrarSnackBar(mensaje: 'Servicio cancelado', esExito: false);
         setState(() => _isSaving = false);
@@ -3454,7 +3513,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       }
 
       final now = DateTime.now();
-      final groupId = Uuid().v4();
+      final groupId = const Uuid().v4();
       final esUSD = _metodoPago == 'Efectivo USD';
       final moneda = esUSD ? 'USD' : 'CUP';
       final tasa = provider.tasaCambioUSD;
@@ -3492,7 +3551,8 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
 
         await provider.agregarVenta(venta);
 
-        if (_necesitaTransferencia) {
+        if (_necesitaTransferencia &&
+            provider.requiereDatosTransferencia) {
           final t = Transferencia(
             id: '',
             ventaId: venta.id,
@@ -3524,6 +3584,526 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   }
 
   String _fmt(double n) {
+    if (n == n.roundToDouble()) return n.toInt().toString();
+    return n.toStringAsFixed(2);
+  }
+}
+
+// ============================================================
+//  ✅ NUEVO · PICKER DE PRODUCTOS CON CATEGORÍAS (MÓVIL)
+// ============================================================
+class _ProductPickerSheet extends StatefulWidget {
+  final AppProvider provider;
+  final String metodoPago;
+  final String? sucursalId;
+  final String? categoriaInicial;
+
+  const _ProductPickerSheet({
+    required this.provider,
+    required this.metodoPago,
+    this.sucursalId,
+    this.categoriaInicial,
+  });
+
+  @override
+  State<_ProductPickerSheet> createState() => _ProductPickerSheetState();
+}
+
+class _ProductPickerSheetState extends State<_ProductPickerSheet> {
+  final _searchCtrl = TextEditingController();
+  String? _categoriaSel;
+
+  @override
+  void initState() {
+    super.initState();
+    _categoriaSel = widget.categoriaInicial;
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  // ─── Categorías con productos (misma lógica que la pantalla)
+  List<String> get _categoriasConProductos {
+    final base = _productosBase;
+    final ids = <String>{};
+    for (final p in base) {
+      if (p.categoriaId != null && p.categoriaId!.isNotEmpty) {
+        ids.add(p.categoriaId!);
+      }
+    }
+    if (ids.isEmpty) return const [];
+    final orden = widget.provider.categorias
+        .where((c) => ids.contains(c.id))
+        .toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    return orden.map((c) => c.id).toList();
+  }
+
+  List<Producto> get _productosBase {
+    if (widget.provider.esAdminGlobal && widget.sucursalId != null) {
+      return widget.provider.productos
+          .where((p) => p.sucursalId == widget.sucursalId)
+          .toList();
+    }
+    return widget.provider.productosPorSucursal;
+  }
+
+  List<Producto> get _productosFiltrados {
+    var base = _productosBase.where((p) => p.stock > 0).toList();
+
+    if (_categoriaSel != null) {
+      base = base.where((p) => p.categoriaId == _categoriaSel).toList();
+    }
+
+    final q = _searchCtrl.text.trim().toLowerCase();
+    if (q.isNotEmpty) {
+      base = base.where((p) {
+        final n = p.nombre.toLowerCase();
+        final sku = (p.sku ?? '').toLowerCase();
+        final cat =
+            widget.provider.getNombreCategoria(p.categoriaId).toLowerCase();
+        return n.contains(q) || sku.contains(q) || cat.contains(q);
+      }).toList();
+    }
+
+    final ventasPorProd = <String, int>{};
+    for (final v in widget.provider.ventas) {
+      ventasPorProd[v.productoId] =
+          (ventasPorProd[v.productoId] ?? 0) + v.cantidad.toInt();
+    }
+    base.sort((a, b) {
+      final va = ventasPorProd[a.id] ?? 0;
+      final vb = ventasPorProd[b.id] ?? 0;
+      if (va != vb) return vb.compareTo(va);
+      return a.nombre.compareTo(b.nombre);
+    });
+    return base;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _P(Theme.of(context).brightness == Brightness.dark);
+    final productos = _productosFiltrados;
+    final cats = _categoriasConProductos;
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.88,
+      minChildSize: 0.5,
+      maxChildSize: 0.96,
+      expand: false,
+      builder: (context, scrollCtrl) {
+        return Container(
+          decoration: BoxDecoration(
+            color: p.surface,
+            borderRadius:
+                const BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: Column(
+            children: [
+              // Handle
+              Padding(
+                padding: const EdgeInsets.only(top: 10, bottom: 6),
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: p.borderStrong,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+
+              // Header
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 12, 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          colors: _C.gradBrand,
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                        ),
+                        borderRadius: BorderRadius.circular(11),
+                        boxShadow: p.glow(_C.primary, o: 0.28),
+                      ),
+                      child: const Icon(
+                        Icons.add_shopping_cart_rounded,
+                        color: Colors.white,
+                        size: 19,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Agregar producto',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.3,
+                              color: p.textHigh,
+                            ),
+                          ),
+                          Text(
+                            '${productos.length} disponible${productos.length == 1 ? '' : 's'}',
+                            style: TextStyle(
+                                fontSize: 11.5, color: p.textMuted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: Icon(Icons.close_rounded, color: p.textMuted),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Buscador
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                child: Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: p.surface2,
+                    borderRadius: BorderRadius.circular(13),
+                    border: Border.all(color: p.borderStrong),
+                  ),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    onChanged: (_) => setState(() {}),
+                    textInputAction: TextInputAction.search,
+                    style: TextStyle(
+                        fontSize: 13.5, color: p.textHigh),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      prefixIcon: Icon(Icons.search_rounded,
+                          size: 19, color: p.textMuted),
+                      hintText: 'Buscar producto…',
+                      hintStyle: TextStyle(
+                          fontSize: 13, color: p.textMuted),
+                      suffixIcon: _searchCtrl.text.isNotEmpty
+                          ? IconButton(
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                setState(() {});
+                              },
+                              icon: Icon(Icons.close_rounded,
+                                  size: 17, color: p.textMuted),
+                            )
+                          : null,
+                    ),
+                  ),
+                ),
+              ),
+
+              // Chips de categoría (solo las que tienen productos)
+              if (cats.isNotEmpty)
+                SizedBox(
+                  height: 36,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    children: [
+                      _catChip(
+                        label: 'Todos',
+                        selected: _categoriaSel == null,
+                        onTap: () =>
+                            setState(() => _categoriaSel = null),
+                        p: p,
+                      ),
+                      ...cats.map((id) {
+                        final nombre =
+                            widget.provider.getNombreCategoria(id);
+                        return _catChip(
+                          label: nombre,
+                          selected: _categoriaSel == id,
+                          onTap: () =>
+                              setState(() => _categoriaSel = id),
+                          p: p,
+                        );
+                      }),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 8),
+
+              // Grid de productos
+              Expanded(
+                child: productos.isEmpty
+                    ? _emptyState(p)
+                    : GridView.builder(
+                        controller: scrollCtrl,
+                        padding:
+                            const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 10,
+                          childAspectRatio: 0.85,
+                        ),
+                        itemCount: productos.length,
+                        itemBuilder: (_, i) =>
+                            _productCard(productos[i], p),
+                      ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _catChip({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    required _P p,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: selected ? Colors.transparent : p.surface2,
+        borderRadius: BorderRadius.circular(11),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(11),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: selected
+                  ? const LinearGradient(colors: _C.gradBrand)
+                  : null,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(
+                color: selected ? Colors.transparent : p.borderStrong,
+              ),
+              boxShadow: selected ? p.glow(_C.primary, o: 0.28) : null,
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    selected ? FontWeight.w800 : FontWeight.w600,
+                color: selected ? Colors.white : p.textMid,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _emptyState(_P p) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: _C.primary.withOpacity(p.dark ? .12 : .08),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.search_off_rounded,
+                  size: 32, color: _C.primary),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              'Sin productos',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: p.textHigh,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Prueba con otra búsqueda o categoría.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.5, color: p.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _productCard(Producto producto, _P p) {
+    final provider = widget.provider;
+    final stockBajo = producto.stock > 0 && producto.stock < 5;
+    final precio = provider.getPrecioProducto(
+      producto,
+      widget.metodoPago,
+      false,
+    );
+
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => Navigator.pop(context, producto),
+        child: Container(
+          decoration: BoxDecoration(
+            color: p.surface2,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: p.border),
+            boxShadow: p.shadowSm,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 55,
+                child: Stack(
+                  children: [
+                    ClipRRect(
+                      borderRadius: const BorderRadius.only(
+                        topLeft: Radius.circular(13),
+                        topRight: Radius.circular(13),
+                      ),
+                      child: Container(
+                        color: p.surface,
+                        width: double.infinity,
+                        height: double.infinity,
+                        child: CachedProductImage(
+                          url: producto.imageUrl,
+                          productName: producto.nombre,
+                          width: double.infinity,
+                          height: double.infinity,
+                          radius: 0,
+                          fit: BoxFit.cover,
+                          agotado: false,
+                          accent: _C.primary,
+                          dangerAccent: _C.danger,
+                        ),
+                      ),
+                    ),
+                    if (stockBajo)
+                      Positioned(
+                        top: 6,
+                        right: 6,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: _C.warning,
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: const Text(
+                            'STOCK BAJO',
+                            style: TextStyle(
+                              fontSize: 7.5,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    Positioned(
+                      bottom: 6,
+                      left: 6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(.55),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          '${_fmtNum(producto.stock)} ${producto.unidadMedida}',
+                          style: const TextStyle(
+                            fontSize: 8.5,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                flex: 45,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          producto.nombre,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                            color: p.textHigh,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              '\$${precio.toStringAsFixed(2)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: -.4,
+                                color: _C.primary,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 2),
+                            child: Text(
+                              '/${producto.unidadMedida}',
+                              style: TextStyle(
+                                fontSize: 8.5,
+                                color: p.textMuted,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _fmtNum(double n) {
     if (n == n.roundToDouble()) return n.toInt().toString();
     return n.toStringAsFixed(2);
   }
