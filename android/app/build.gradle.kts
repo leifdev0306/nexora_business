@@ -6,7 +6,6 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// 🔥 Lee el archivo key.properties con tus credenciales
 val keystoreProperties = Properties()
 val keystorePropertiesFile = rootProject.file("key.properties")
 if (keystorePropertiesFile.exists()) {
@@ -14,8 +13,11 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.example.cubatravel_admin"   // ← AJUSTA CON TU NAMESPACE REAL
+    namespace = "com.example.cubatravel_admin"
+
+    // ✅ compileSdk 36: requerido por todos los plugins modernos
     compileSdk = 36
+
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -25,14 +27,14 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.example.cubatravel_admin"   // ← AJUSTA CON TU APP ID REAL
+        applicationId = "com.example.cubatravel_admin"
         minSdk = flutter.minSdkVersion
-        targetSdk = 36
+        // targetSdk 35 es estable; 36 aún es beta
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
-    // 🔥 FIRMA REAL (usa tus credenciales de key.properties)
     signingConfigs {
         create("release") {
             if (keystorePropertiesFile.exists()) {
@@ -40,16 +42,12 @@ android {
                 keyPassword = keystoreProperties["keyPassword"] as String?
                 storeFile = keystoreProperties["storeFile"]?.let { file(it) }
                 storePassword = keystoreProperties["storePassword"] as String?
-            } else {
-                // Fallback a debug si no existe key.properties (no debería ocurrir)
-                println("⚠️ key.properties no encontrado. Usando firma debug.")
             }
         }
     }
 
     buildTypes {
         release {
-            // Usa la firma release si existe key.properties, si no fallback a debug
             signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
             } else {

@@ -1,18 +1,25 @@
 // ============================================================
 //  settings_screen.dart  ·  NEXORA BUSINESS
 //  Configuración premium con panel de sincronización
+//  · Paquete de impresión: flutter_pos_printer_platform_monster
+//  · ✅ Vendedores solo ven: Modo de ventas, Impresora,
+//       Sincronización y Apariencia
+//  · ✅ Dueño/Gerente ven todo (incluye % e impuestos)
 // ============================================================
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_pos_printer_platform_monster/flutter_pos_printer_platform.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../main.dart';
 import '../responsive_helper.dart';
+import '../services/printer_service.dart';
 
 // ============================================================
 //  Acentos compartidos
@@ -31,6 +38,7 @@ class _C {
 
   static const gradBrand = [Color(0xFF1A5CFF), Color(0xFF06B6D4)];
   static const gradSuccess = [Color(0xFF10B981), Color(0xFF06B6D4)];
+  static const gradPurple = [Color(0xFF8B5CF6), Color(0xFFEC4899)];
 }
 
 class _P {
@@ -77,6 +85,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   bool _reintentando = false;
   bool _limpiando = false;
 
+  bool _printerScanning = false;
+  bool _printerTesting = false;
+
   @override
   void initState() {
     super.initState();
@@ -101,6 +112,13 @@ class _SettingsScreenState extends State<SettingsScreen>
       vsync: this,
       duration: const Duration(milliseconds: 450),
     )..forward();
+
+    Future.microtask(() async {
+      try {
+        await PrinterService.instance.autoConnect();
+        if (mounted) setState(() {});
+      } catch (_) {}
+    });
   }
 
   @override
@@ -112,11 +130,17 @@ class _SettingsScreenState extends State<SettingsScreen>
     super.dispose();
   }
 
+  // ============================================================
+  //  BUILD · con restricciones por rol
+  // ============================================================
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AppProvider>(context);
     final p = _P(Theme.of(context).brightness == Brightness.dark);
     final isDesktop = ResponsiveHelper.isDesktop();
+
+    // ✅ Detectar si es vendedor para ocultar secciones sensibles
+    final esVendedor = provider.rol == 'vendedor';
 
     return Scaffold(
       backgroundColor: p.bg,
@@ -144,44 +168,65 @@ class _SettingsScreenState extends State<SettingsScreen>
                     children: [
                       _heroHeader(provider, p, isDesktop),
                       const SizedBox(height: 24),
+
+                      // ─── Modo de ventas (visible para todos)
                       _sectionTitle(p, Icons.point_of_sale_rounded,
                           'Modo de ventas',
                           'Define cómo quieres registrar las operaciones.'),
                       const SizedBox(height: 12),
                       _salesMode(provider, p, isDesktop),
                       const SizedBox(height: 26),
-                      // ✅ NUEVO: sección de datos de transferencia
-                      _sectionTitle(p, Icons.receipt_long_rounded,
-                          'Datos de transferencia',
-                          'Configura si se solicitan los datos del cliente en pagos por transferencia.'),
+
+                      // ─── Datos de transferencia (SOLO no-vendedores)
+                      if (!esVendedor) ...[
+                        _sectionTitle(p, Icons.receipt_long_rounded,
+                            'Datos de transferencia',
+                            'Configura si se solicitan los datos del cliente en pagos por transferencia.'),
+                        const SizedBox(height: 12),
+                        _transferDataCard(provider, p),
+                        const SizedBox(height: 26),
+                      ],
+
+                      // ─── Impresora térmica (visible para todos)
+                      _sectionTitle(p, Icons.print_rounded,
+                          'Impresora térmica',
+                          'Conecta tu Xprinter por USB/OTG para imprimir facturas.'),
                       const SizedBox(height: 12),
-                      _transferDataCard(provider, p),
+                      _printerSection(provider, p),
                       const SizedBox(height: 26),
+
+                      // ─── Sincronización (visible para todos)
                       _sectionTitle(p, Icons.cloud_sync_rounded,
                           'Sincronización',
                           'Revisa el estado de la cola de operaciones pendientes.'),
                       const SizedBox(height: 12),
                       _syncSection(provider, p, isDesktop),
                       const SizedBox(height: 26),
-                      _sectionTitle(p, Icons.currency_exchange_rounded,
-                          'Valores del negocio',
-                          'Configura tasas e impuestos de la aplicación.'),
-                      const SizedBox(height: 12),
-                      if (isDesktop)
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: _exchangeCard(provider, p)),
-                            const SizedBox(width: 16),
-                            Expanded(child: _taxesCard(provider, p)),
-                          ],
-                        )
-                      else ...[
-                        _exchangeCard(provider, p),
-                        const SizedBox(height: 14),
-                        _taxesCard(provider, p),
+
+                      // ─── Valores del negocio (SOLO no-vendedores)
+                      if (!esVendedor) ...[
+                        _sectionTitle(p, Icons.currency_exchange_rounded,
+                            'Valores del negocio',
+                            'Configura tasas e impuestos de la aplicación.'),
+                        const SizedBox(height: 12),
+                        if (isDesktop)
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(child: _exchangeCard(provider, p)),
+                              const SizedBox(width: 16),
+                              Expanded(child: _taxesCard(provider, p)),
+                            ],
+                          )
+                        else ...[
+                          _exchangeCard(provider, p),
+                          const SizedBox(height: 14),
+                          _taxesCard(provider, p),
+                        ],
+                        const SizedBox(height: 26),
                       ],
-                      const SizedBox(height: 26),
+
+                      // ─── Apariencia (visible para todos)
                       _sectionTitle(p, Icons.palette_outlined, 'Apariencia',
                           'Personaliza cómo se muestra Nexora.'),
                       const SizedBox(height: 12),
@@ -199,9 +244,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  FONDO
-  // ============================================================
   Widget _background(_P p) {
     return Positioned.fill(
       child: IgnorePointer(
@@ -223,9 +265,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  APP BAR
-  // ============================================================
   PreferredSizeWidget _appBar(_P p) {
     return AppBar(
       backgroundColor: p.surface,
@@ -280,12 +319,8 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  HERO HEADER
-  // ============================================================
   Widget _heroHeader(AppProvider provider, _P p, bool isDesktop) {
     final isCierre = provider.usaCierreDiario;
-    final modeColor = isCierre ? _C.warning : _C.primary;
 
     return Container(
       padding: EdgeInsets.all(isDesktop ? 22 : 18),
@@ -385,9 +420,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  SECTION TITLE
-  // ============================================================
   Widget _sectionTitle(
       _P p, IconData icon, String title, String subtitle) {
     return Row(
@@ -438,9 +470,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  SALES MODE
-  // ============================================================
   Widget _salesMode(AppProvider provider, _P p, bool isDesktop) {
     final tiempoReal = provider.modoVentas == AppProvider.MODO_TIEMPO_REAL;
     final cierreDiario = provider.modoVentas == AppProvider.MODO_CIERRE_DIARIO;
@@ -554,7 +583,8 @@ class _SettingsScreenState extends State<SettingsScreen>
                     height: 46,
                     decoration: BoxDecoration(
                       gradient: selected
-                          ? LinearGradient(colors: [color, color.withOpacity(.75)])
+                          ? LinearGradient(
+                              colors: [color, color.withOpacity(.75)])
                           : null,
                       color: selected ? null : color.withOpacity(.12),
                       borderRadius: BorderRadius.circular(13),
@@ -659,9 +689,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  ✅ NUEVO · TRANSFER DATA CARD
-  // ============================================================
   Widget _transferDataCard(AppProvider provider, _P p) {
     final requiere = provider.requiereDatosTransferencia;
     final color = requiere ? _C.primary : _C.textMuted;
@@ -766,9 +793,394 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  SYNC SECTION
-  // ============================================================
+  Widget _printerSection(AppProvider provider, _P p) {
+    final service = PrinterService.instance;
+    final conectada = service.isConnected;
+    final nombre = service.device?.name ?? 'Ninguna impresora guardada';
+    final color = conectada ? _C.success : p.textMuted;
+
+    return _card(
+      p,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      color.withOpacity(.22),
+                      color.withOpacity(.06),
+                    ],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: color.withOpacity(.24)),
+                ),
+                child: Icon(
+                  conectada
+                      ? Icons.print_rounded
+                      : Icons.print_disabled_rounded,
+                  color: color,
+                  size: 20,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          conectada ? 'Impresora conectada' : 'Sin impresora',
+                          style: TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.2,
+                            color: p.textHigh,
+                          ),
+                        ),
+                        if (conectada) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 7, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: _C.success.withOpacity(.14),
+                              borderRadius: BorderRadius.circular(20),
+                              border: Border.all(
+                                  color: _C.success.withOpacity(.32)),
+                            ),
+                            child: const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.check_circle_rounded,
+                                    size: 9, color: _C.success),
+                                SizedBox(width: 3),
+                                Text(
+                                  'OK',
+                                  style: TextStyle(
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w900,
+                                    color: _C.success,
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      nombre,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: p.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Text(
+            'ANCHO DE PAPEL',
+            style: TextStyle(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+              color: p.textMuted,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: _paperChip(
+                  label: '58 mm',
+                  sublabel: 'Compacta',
+                  selected: service.paperMm == 58,
+                  onTap: () async {
+                    await service.setPaperMm(58);
+                    if (mounted) setState(() {});
+                  },
+                  p: p,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _paperChip(
+                  label: '80 mm',
+                  sublabel: 'Estándar',
+                  selected: service.paperMm == 80,
+                  onTap: () async {
+                    await service.setPaperMm(80);
+                    if (mounted) setState(() {});
+                  },
+                  p: p,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _printerBtn(
+                label: _printerScanning ? 'Buscando…' : 'Buscar impresoras',
+                icon: Icons.search_rounded,
+                color: _C.primary,
+                loading: _printerScanning,
+                onPressed: _printerScanning ? null : _abrirScannerImpresora,
+              ),
+              if (conectada)
+                _printerBtn(
+                  label: _printerTesting ? 'Imprimiendo…' : 'Probar impresión',
+                  icon: Icons.print_rounded,
+                  color: _C.purple,
+                  loading: _printerTesting,
+                  onPressed: _printerTesting ? null : _probarImpresion,
+                ),
+              if (conectada)
+                _printerBtn(
+                  label: 'Desconectar',
+                  icon: Icons.link_off_rounded,
+                  color: _C.danger,
+                  onPressed: () async {
+                    await service.disconnect();
+                    if (mounted) setState(() {});
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: p.surface2,
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: p.border),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.usb_rounded, size: 15, color: p.textMuted),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Conecta la impresora por cable USB/OTG y asegúrate de que esté encendida antes de buscar. La primera vez Android pedirá permiso de acceso.',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.4,
+                      color: p.textMuted,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _paperChip({
+    required String label,
+    required String sublabel,
+    required bool selected,
+    required VoidCallback onTap,
+    required _P p,
+  }) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(13),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(13),
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+          decoration: BoxDecoration(
+            color: selected
+                ? _C.primary.withOpacity(p.dark ? .16 : .08)
+                : p.surface2,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(
+              color: selected ? _C.primary : p.border,
+              width: selected ? 1.6 : 1.2,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: _C.primary.withOpacity(.20),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.receipt_rounded,
+                    size: 16,
+                    color: selected ? _C.primary : p.textMuted,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: selected ? _C.primary : p.textHigh,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (selected)
+                    const Icon(Icons.check_circle_rounded,
+                        size: 16, color: _C.primary),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                sublabel,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: p.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _printerBtn({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback? onPressed,
+    bool loading = false,
+  }) {
+    return Material(
+      color: color.withOpacity(.12),
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onPressed,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(color: color.withOpacity(.24)),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              loading
+                  ? SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: color,
+                      ),
+                    )
+                  : Icon(icon, size: 15, color: color),
+              const SizedBox(width: 7),
+              Text(
+                label,
+                style: TextStyle(
+                  color: color,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _abrirScannerImpresora() async {
+    setState(() => _printerScanning = true);
+    try {
+      await showDialog(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => const _PrinterScannerDialog(),
+      );
+      if (mounted) setState(() {});
+    } finally {
+      if (mounted) setState(() => _printerScanning = false);
+    }
+  }
+
+  Future<void> _probarImpresion() async {
+    setState(() => _printerTesting = true);
+    try {
+      final service = PrinterService.instance;
+      if (!service.isConnected) {
+        mostrarSnackBar(
+            mensaje: 'No hay impresora conectada', esExito: false);
+        return;
+      }
+
+      final pruebaVenta = Venta(
+        id: 'TEST0001',
+        productoId: '',
+        productoNombre: 'Prueba',
+        cantidad: 1,
+        precioUnitario: 0,
+        total: 0,
+        metodoPago: 'Efectivo CUP',
+        fecha: DateTime.now(),
+        costoUnitario: 0,
+        costoTotal: 0,
+      );
+
+      final ok = await service.printSale(
+        venta: pruebaVenta,
+        items: const [
+          {'nombre': 'Artículo de prueba', 'cantidad': 1, 'total': 0},
+        ],
+        empresaNombre: 'NEXORA · IMPRESIÓN OK',
+      );
+
+      if (mounted) {
+        mostrarSnackBar(
+          mensaje: ok
+              ? 'Ticket de prueba enviado'
+              : 'Error al imprimir. Verifica la conexión.',
+          esExito: ok,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        mostrarSnackBar(mensaje: 'Error: $e', esExito: false);
+      }
+    } finally {
+      if (mounted) setState(() => _printerTesting = false);
+    }
+  }
+
   Widget _syncSection(AppProvider provider, _P p, bool isDesktop) {
     final pendientes = provider.pendientesDetalle;
     final total = pendientes.length;
@@ -1058,9 +1470,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  ACCIONES SYNC
-  // ============================================================
   Future<void> _exportarPendientes(AppProvider provider) async {
     setState(() => _exportando = true);
     try {
@@ -1218,15 +1627,9 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _snack(String msg, {bool error = false}) {
-    mostrarSnackBar(
-      mensaje: msg,
-      esExito: !error,
-    );
+    mostrarSnackBar(mensaje: msg, esExito: !error);
   }
 
-  // ============================================================
-  //  EXCHANGE CARD
-  // ============================================================
   Widget _exchangeCard(AppProvider provider, _P p) {
     return _card(
       p,
@@ -1317,9 +1720,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  TAXES CARD
-  // ============================================================
   Widget _taxesCard(AppProvider provider, _P p) {
     return _card(
       p,
@@ -1418,9 +1818,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  THEME CARD
-  // ============================================================
   Widget _themeCard(AppProvider provider, _P p) {
     return _card(
       p,
@@ -1585,9 +1982,6 @@ class _SettingsScreenState extends State<SettingsScreen>
     );
   }
 
-  // ============================================================
-  //  COMPONENTES
-  // ============================================================
   Widget _card(_P p, {required Widget child}) {
     return Container(
       width: double.infinity,
@@ -1756,6 +2150,442 @@ class _SettingsScreenState extends State<SettingsScreen>
 }
 
 // ============================================================
+//  DIÁLOGO DE ESCANEO DE IMPRESORAS
+// ============================================================
+class _PrinterScannerDialog extends StatefulWidget {
+  const _PrinterScannerDialog({Key? key}) : super(key: key);
+
+  @override
+  State<_PrinterScannerDialog> createState() => _PrinterScannerDialogState();
+}
+
+class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
+  final List<PrinterDevice> _devices = [];
+  bool _scanning = true;
+  bool _connecting = false;
+  String? _error;
+  StreamSubscription<PrinterDevice>? _scanSub;
+  Timer? _timeout;
+
+  @override
+  void initState() {
+    super.initState();
+    _startScan();
+  }
+
+  void _startScan() {
+    setState(() {
+      _devices.clear();
+      _scanning = true;
+      _error = null;
+    });
+
+    _timeout?.cancel();
+    try {
+      _scanSub?.cancel();
+    } catch (_) {}
+
+    try {
+      _scanSub = PrinterService.instance.discoverUsb().listen(
+        (device) {
+          if (!mounted) return;
+          setState(() => _devices.add(device));
+        },
+        onError: (e) {
+          if (!mounted) return;
+          setState(() => _error = e.toString());
+        },
+        onDone: () {
+          if (!mounted) return;
+          setState(() => _scanning = false);
+        },
+      );
+
+      _timeout = Timer(const Duration(seconds: 6), () {
+        if (mounted && _scanning) {
+          setState(() => _scanning = false);
+        }
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _scanning = false;
+      });
+    }
+  }
+
+  Future<void> _conectar(PrinterDevice device) async {
+    if (_connecting) return;
+    setState(() => _connecting = true);
+
+    try {
+      try {
+        await _scanSub?.cancel();
+      } catch (_) {}
+      _scanSub = null;
+      _timeout?.cancel();
+      _timeout = null;
+
+      final ok = await PrinterService.instance.connect(device);
+
+      if (!mounted) return;
+
+      if (ok) {
+        Navigator.of(context, rootNavigator: true).pop();
+        await Future.delayed(const Duration(milliseconds: 400));
+        mostrarSnackBar(
+          mensaje: 'Impresora conectada: ${device.name ?? "USB"}',
+          esExito: true,
+        );
+      } else {
+        setState(() => _connecting = false);
+        mostrarSnackBar(
+          mensaje:
+              'No se pudo conectar. Verifica el cable USB y la alimentación.',
+          esExito: false,
+        );
+      }
+    } catch (e) {
+      debugPrint('❌ Error al conectar: $e');
+      if (mounted) {
+        setState(() => _connecting = false);
+        mostrarSnackBar(
+          mensaje: 'Error al conectar: $e',
+          esExito: false,
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    try {
+      _scanSub?.cancel();
+    } catch (_) {}
+    _timeout?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final p = _P(Theme.of(context).brightness == Brightness.dark);
+
+    return Dialog(
+      backgroundColor: p.surface,
+      shape:
+          RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+      insetPadding: const EdgeInsets.all(20),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 620),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      gradient:
+                          const LinearGradient(colors: _C.gradBrand),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: _C.primary.withOpacity(.30),
+                          blurRadius: 12,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(Icons.print_rounded,
+                        color: Colors.white, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Buscar impresoras',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -0.3,
+                            color: p.textHigh,
+                          ),
+                        ),
+                        Text(
+                          _connecting
+                              ? 'Conectando…'
+                              : (_scanning
+                                  ? 'Escaneando puertos USB…'
+                                  : '${_devices.length} encontrada${_devices.length == 1 ? '' : 's'}'),
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: _connecting
+                                ? _C.success
+                                : p.textMuted,
+                            fontWeight: _connecting
+                                ? FontWeight.w800
+                                : FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _connecting
+                        ? null
+                        : () => Navigator.pop(context),
+                    icon: Icon(Icons.close_rounded, color: p.textMid),
+                  ),
+                ],
+              ),
+            ),
+            Divider(height: 1, color: p.border),
+            Expanded(
+              child: _scanning
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          SizedBox(
+                            width: 48,
+                            height: 48,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: _C.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Buscando impresoras conectadas…',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: p.textMid,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Asegúrate de que la impresora esté encendida',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: p.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : _error != null
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Container(
+                                  width: 64,
+                                  height: 64,
+                                  decoration: BoxDecoration(
+                                    color: _C.danger.withOpacity(.12),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(
+                                      Icons.error_outline_rounded,
+                                      color: _C.danger,
+                                      size: 32),
+                                ),
+                                const SizedBox(height: 14),
+                                Text(
+                                  'Error al escanear',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    color: p.textHigh,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _error!,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: p.textMuted,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      : _devices.isEmpty
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(24),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Container(
+                                      width: 72,
+                                      height: 72,
+                                      decoration: BoxDecoration(
+                                        color: p.surface2,
+                                        shape: BoxShape.circle,
+                                        border:
+                                            Border.all(color: p.border),
+                                      ),
+                                      child: Icon(
+                                        Icons.print_disabled_rounded,
+                                        size: 34,
+                                        color: p.textMuted,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    Text(
+                                      'No se encontraron impresoras',
+                                      style: TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w900,
+                                        color: p.textHigh,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Verifica el cable USB/OTG y que la impresora esté encendida.',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        color: p.textMuted,
+                                        height: 1.4,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            )
+                          : ListView.separated(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 8),
+                              itemCount: _devices.length,
+                              separatorBuilder: (_, __) => Divider(
+                                height: 1,
+                                indent: 16,
+                                endIndent: 16,
+                                color: p.border,
+                              ),
+                              itemBuilder: (_, i) =>
+                                  _deviceTile(_devices[i], p),
+                            ),
+            ),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: p.surface2,
+                border: Border(top: BorderSide(color: p.border)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '¿No aparece tu Xprinter? Apaga y enciende la impresora e intenta de nuevo.',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: p.textMuted,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  TextButton.icon(
+                    onPressed:
+                        (_scanning || _connecting) ? null : _startScan,
+                    icon: const Icon(Icons.refresh_rounded, size: 16),
+                    label: const Text('Reintentar'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: _C.primary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _deviceTile(PrinterDevice device, _P p) {
+    final name = device.name ?? 'Impresora USB';
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _connecting ? null : () => _conectar(device),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _C.primary.withOpacity(p.dark ? .16 : .10),
+                  borderRadius: BorderRadius.circular(11),
+                  border:
+                      Border.all(color: _C.primary.withOpacity(.24)),
+                ),
+                child: const Icon(Icons.print_rounded,
+                    color: _C.primary, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: p.textHigh,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      'VID: ${device.vendorId ?? '—'} · '
+                      'PID: ${device.productId ?? '—'}',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontFamily: 'monospace',
+                        color: p.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _connecting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: _C.primary,
+                      ),
+                    )
+                  : Icon(Icons.chevron_right_rounded,
+                      size: 18, color: p.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================
 //  DIÁLOGO DE PENDIENTES
 // ============================================================
 class _PendientesDialog extends StatefulWidget {
@@ -1913,10 +2743,9 @@ class _PendientesDialogState extends State<_PendientesDialog> {
     final accion = p['accion']?.toString() ?? '—';
     final id = p['id']?.toString() ?? '—';
     final key = p['_key']?.toString() ?? '';
-    final intentos = (p['intentos'] ?? 0) as int;
-    final error = p['ultimoError']?.toString();
-    final errorFecha = p['ultimoErrorFecha']?.toString();
-    final timestamp = p['timestamp']?.toString() ?? '—';
+    final intentos = (p['attempts'] ?? 0) as int;
+    final error = p['lastError']?.toString();
+    final timestamp = p['createdAt']?.toString() ?? '—';
 
     final color = intentos >= 5
         ? _C.danger
@@ -1973,8 +2802,6 @@ class _PendientesDialogState extends State<_PendientesDialog> {
       children: [
         _infoLine(palette, 'Clave interna', key),
         _infoLine(palette, 'Timestamp', timestamp),
-        if (errorFecha != null)
-          _infoLine(palette, 'Último error', errorFecha),
         if (error != null) ...[
           const SizedBox(height: 8),
           Container(

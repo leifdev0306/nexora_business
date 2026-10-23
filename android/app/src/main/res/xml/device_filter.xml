@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Filtro genérico para impresoras térmicas ESC/POS.
+         Cubre la mayoría de Xprinter, Epson, Star, Bixolon, etc. -->
+    <usb-device vendor-id="1155" />   <!-- 0x0483 STMicroelectronics -->
+    <usb-device vendor-id="1208" />   <!-- 0x04B8 Epson -->
+    <usb-device vendor-id="1305" />   <!-- 0x0519 Star Micronics -->
+    <usb-device vendor-id="26728" />  <!-- 0x6868 Xprinter (común) -->
+    <usb-device vendor-id="10473" />  <!-- 0x28E9 Xprinter (alternativa) -->
+    <usb-device vendor-id="1027" />   <!-- 0x0403 FTDI -->
+    <usb-device vendor-id="4292" />   <!-- 0x10C4 Silicon Labs -->
+    <usb-device vendor-id="1504" />   <!-- 0x05E0 Avery Dennison -->
+    <usb-device vendor-id="4070" />   <!-- 0x0FE6 ICS Advent -->
+</resources>

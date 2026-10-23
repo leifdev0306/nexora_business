@@ -22,6 +22,7 @@ rootProject.buildDir = newBuildDir
 subprojects {
     project.buildDir = File(rootProject.buildDir, project.name)
 }
+
 subprojects {
     project.evaluationDependsOn(":app")
 }

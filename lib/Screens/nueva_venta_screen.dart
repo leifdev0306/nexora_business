@@ -5,10 +5,12 @@
 //  · Grid desktop compacto: 5/6/7 columnas
 //  · Paleta azul eléctrico + cyan
 //  · Atajos: Ctrl+K (buscar), F12 / Ctrl+Enter (cobrar), Esc
-//  · ✅ Datos de transferencia opcionales (config. en Settings)
-//  · ✅ NUEVO: Categorías en desktop y móvil
-//     · Solo se muestran categorías que tienen productos
-//     · Picker móvil: bottom sheet con búsqueda + categorías + grid
+//  · Datos de transferencia opcionales (config. en Settings)
+//  · Categorías en desktop y móvil (solo las que tienen productos)
+//  · Fecha de venta personalizada (backdating)
+//  · ✅ NUEVO: Impresión automática de factura (Xprinter USB/OTG)
+//     · Toggle on/off en config bar
+//     · Si falla la impresión, la venta ya está guardada
 // ============================================================
 
 import 'dart:async';
@@ -21,6 +23,7 @@ import 'package:nexora_business/screens/servicio_cancelado_screen.dart';
 import 'package:uuid/uuid.dart';
 import '../main.dart';
 import '../widgets/cached_product_image.dart';
+import '../services/printer_service.dart';
 
 // ============================================================
 //  Acentos compartidos
@@ -119,6 +122,12 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   String? _clienteId;
   String? _sucursalIdSeleccionada;
 
+  // ✅ Fecha de venta personalizable
+  DateTime _fechaVenta = DateTime.now();
+
+  // ✅ NUEVO: toggle de impresión de factura
+  bool _imprimirFactura = true;
+
   // ─── Carrito
   List<ItemVenta> _items = [];
 
@@ -149,6 +158,13 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
 
   bool get _necesitaTransferencia =>
       _metodoPago == 'Transfermóvil' || _metodoPago == 'EnZona';
+
+  bool get _esFechaPersonalizada {
+    final now = DateTime.now();
+    return _fechaVenta.year != now.year ||
+        _fechaVenta.month != now.month ||
+        _fechaVenta.day != now.day;
+  }
 
   @override
   void initState() {
@@ -183,7 +199,62 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   }
 
   // ============================================================
-  //  LÓGICA DE CARRITO
+  //  FECHA DE VENTA
+  // ============================================================
+  Future<void> _seleccionarFechaVenta(BuildContext context) async {
+    final now = DateTime.now();
+
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _fechaVenta,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year, now.month, now.day),
+      helpText: 'Fecha de la venta',
+      cancelText: 'Cancelar',
+      confirmText: 'Aceptar',
+      fieldLabelText: 'Fecha',
+      fieldHintText: 'dd/mm/aaaa',
+    );
+
+    if (picked == null) return;
+
+    final nuevaFecha = DateTime(
+      picked.year,
+      picked.month,
+      picked.day,
+      now.hour,
+      now.minute,
+      now.second,
+    );
+
+    setState(() {
+      _fechaVenta = nuevaFecha;
+      if (_necesitaTransferencia &&
+          _fechaHoraTransferencia.isAfter(nuevaFecha)) {
+        _fechaHoraTransferencia = nuevaFecha;
+      }
+    });
+
+    mostrarSnackBar(
+      mensaje: _esFechaPersonalizada
+          ? 'Fecha de la venta: hoy'
+          : 'Fecha de la venta: ${DateFormat('dd/MM/yyyy').format(nuevaFecha)}',
+      esExito: true,
+    );
+  }
+
+  void _resetearFechaVenta() {
+    setState(() {
+      _fechaVenta = DateTime.now();
+    });
+    mostrarSnackBar(
+      mensaje: 'Fecha de la venta restablecida a hoy',
+      esExito: true,
+    );
+  }
+
+  // ============================================================
+  //  CARRITO
   // ============================================================
   void _agregarItem() {
     setState(() {
@@ -227,11 +298,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     return provider.productosPorSucursal;
   }
 
-  // ============================================================
-  //  ✅ CATEGORÍAS CON PRODUCTOS (multi-sucursal aware)
-  //  Devuelve SOLO las categorías que tienen al menos un producto
-  //  en la sucursal activa, ordenadas por sortOrder.
-  // ============================================================
   List<String> _categoriasConProductos(AppProvider provider) {
     final base = _getProductosDisponibles(provider);
 
@@ -244,7 +310,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
 
     if (idsConProducto.isEmpty) return const [];
 
-    // Mantener el orden definido por la empresa (sortOrder ascendente).
     final orden = provider.categorias
         .where((c) => idsConProducto.contains(c.id))
         .toList()
@@ -475,9 +540,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     _repeticionTimer = null;
   }
 
-  // ============================================================
-  //  ✅ NUEVO FLUJO MÓVIL · PICKER CON CATEGORÍAS
-  // ============================================================
   Future<void> _abrirPickerProductos(
     BuildContext context, {
     String? categoriaInicial,
@@ -510,9 +572,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     await _abrirPickerProductos(context);
   }
 
-  // ============================================================
-  //  PRODUCTOS / CATEGORÍAS DESKTOP
-  // ============================================================
   List<Producto> _productosDesktop(AppProvider provider) {
     List<Producto> base;
     if (provider.esAdminGlobal && _sucursalIdSeleccionada != null) {
@@ -568,6 +627,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       _telefonoCtrl.clear();
       _numeroTransferenciaCtrl.clear();
       _fechaHoraTransferencia = DateTime.now();
+      _fechaVenta = DateTime.now();
     });
   }
 
@@ -590,9 +650,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     }
   }
 
-  // ============================================================
-  //  BUILD
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AppProvider>(context);
@@ -641,6 +698,161 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   }
 
   // ============================================================
+  //  CHIP FECHA (reutilizable)
+  // ============================================================
+  Widget _fechaVentaChip(BuildContext context, _P p) {
+    final esCustom = _esFechaPersonalizada;
+    final color = esCustom ? _C.warning : _C.primary;
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Material(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => _seleccionarFechaVenta(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: esCustom
+                    ? color.withOpacity(p.dark ? .14 : .08)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: esCustom
+                      ? color.withOpacity(.45)
+                      : p.borderStrong,
+                  width: esCustom ? 1.4 : 1,
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    esCustom
+                        ? Icons.event_rounded
+                        : Icons.today_rounded,
+                    size: 15,
+                    color: color,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    esCustom
+                        ? DateFormat('dd/MM/yyyy').format(_fechaVenta)
+                        : 'Hoy',
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: esCustom ? color : p.textHigh,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 16,
+                    color: p.textMuted,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        if (esCustom) ...[
+          const SizedBox(width: 4),
+          Material(
+            color: p.surface2,
+            shape: const CircleBorder(),
+            child: InkWell(
+              customBorder: const CircleBorder(),
+              onTap: _resetearFechaVenta,
+              child: Padding(
+                padding: const EdgeInsets.all(7),
+                child: Icon(
+                  Icons.refresh_rounded,
+                  size: 14,
+                  color: p.textMuted,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ============================================================
+  //  ✅ CHIP IMPRESIÓN (reutilizable)
+  // ============================================================
+  Widget _imprimirFacturaChip(_P p) {
+    final activo = _imprimirFactura;
+    final color = activo ? _C.purple : p.textMuted;
+
+    return Material(
+      color: activo ? _C.purple.withOpacity(p.dark ? .14 : .08) : Colors.transparent,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: () => setState(() => _imprimirFactura = !_imprimirFactura),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: activo ? _C.purple.withOpacity(.45) : p.borderStrong,
+              width: activo ? 1.4 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                activo ? Icons.print_rounded : Icons.print_disabled_rounded,
+                size: 15,
+                color: color,
+              ),
+              const SizedBox(width: 7),
+              Text(
+                activo ? 'Imprimir factura' : 'No imprimir',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                width: 26,
+                height: 14,
+                decoration: BoxDecoration(
+                  color: activo ? _C.purple : p.borderStrong,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: AnimatedAlign(
+                  duration: const Duration(milliseconds: 180),
+                  alignment:
+                      activo ? Alignment.centerRight : Alignment.centerLeft,
+                  child: Container(
+                    width: 12,
+                    height: 12,
+                    margin: const EdgeInsets.symmetric(horizontal: 1),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
   //  DESKTOP
   // ============================================================
   Widget _buildDesktop(
@@ -677,7 +889,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── HEADER DESKTOP
   Widget _desktopHeader(
       BuildContext context, AppProvider provider, _P p) {
     final nombreCliente = _clienteId != null
@@ -719,14 +930,51 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Nueva venta',
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -.3,
-                  color: p.textHigh,
-                ),
+              Row(
+                children: [
+                  Text(
+                    'Nueva venta',
+                    style: TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -.3,
+                      color: p.textHigh,
+                    ),
+                  ),
+                  if (_esFechaPersonalizada) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _C.warning.withOpacity(p.dark ? .18 : .10),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: _C.warning.withOpacity(.32)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.event_rounded,
+                            size: 10,
+                            color: _C.warning,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            DateFormat('dd/MM/yy').format(_fechaVenta),
+                            style: const TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w900,
+                              color: _C.warning,
+                              letterSpacing: .2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
               ),
               Text(
                 'Punto de venta · Nexora Business',
@@ -804,7 +1052,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CONFIG BAR DESKTOP
   Widget _desktopConfigBar(
       BuildContext context, AppProvider provider, _P p) {
     final esAdmin = provider.esAdminGlobal;
@@ -823,6 +1070,10 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             onTap: () => _mostrarMetodoPagoDesktop(context),
             p: p,
           ),
+          const SizedBox(width: 10),
+          _fechaVentaChip(context, p),
+          const SizedBox(width: 10),
+          _imprimirFacturaChip(p),
           const SizedBox(width: 10),
           if (esAdmin) _sucursalDropdown(context, provider, p),
           const Spacer(),
@@ -942,11 +1193,10 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CATALOG DESKTOP (con categorías)
   Widget _desktopCatalog(
       BuildContext context, AppProvider provider, _P p) {
     final productos = _productosDesktop(provider);
-    final categorias = _categoriasConProductos(provider); // ✅ Solo con productos
+    final categorias = _categoriasConProductos(provider);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 16, 16),
@@ -1019,7 +1269,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           ),
           const SizedBox(height: 12),
 
-          // ✅ Chips de categoría (solo las que tienen productos)
           if (categorias.isNotEmpty)
             SizedBox(
               height: 36,
@@ -1131,7 +1380,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── PRODUCT CARD DESKTOP
   Widget _productCardDesktop(
     BuildContext context,
     Producto producto,
@@ -1385,7 +1633,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CART DESKTOP
   Widget _desktopCart(
       BuildContext context, AppProvider provider, _P p) {
     return Container(
@@ -1758,7 +2005,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CART ITEM DESKTOP
   Widget _cartItemDesktop(ItemVenta item, Producto producto, _P p) {
     final step = _getStepForUnit(producto.unidadMedida);
     final subtotal = item.cantidad * item.precio;
@@ -2202,6 +2448,39 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
               ),
             ),
           ),
+          if (_esFechaPersonalizada) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                color: _C.warning.withOpacity(p.dark ? .18 : .10),
+                borderRadius: BorderRadius.circular(20),
+                border:
+                    Border.all(color: _C.warning.withOpacity(.32)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.event_rounded,
+                    size: 10,
+                    color: _C.warning,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    DateFormat('dd/MM').format(_fechaVenta),
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w900,
+                      color: _C.warning,
+                      letterSpacing: .2,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
       actions: [
@@ -2234,9 +2513,13 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           color: p.surface,
           onSelected: (v) {
             if (v == 'clear') _limpiarVenta();
+            if (v == 'reset_date') _resetearFechaVenta();
+            if (v == 'toggle_print') {
+              setState(() => _imprimirFactura = !_imprimirFactura);
+            }
           },
-          itemBuilder: (_) => const [
-            PopupMenuItem(
+          itemBuilder: (_) => [
+            const PopupMenuItem(
               value: 'clear',
               child: Row(
                 children: [
@@ -2246,6 +2529,17 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
                 ],
               ),
             ),
+            if (_esFechaPersonalizada)
+              const PopupMenuItem(
+                value: 'reset_date',
+                child: Row(
+                  children: [
+                    Icon(Icons.today_rounded, size: 18),
+                    SizedBox(width: 10),
+                    Text('Fecha a hoy'),
+                  ],
+                ),
+              ),
           ],
         ),
       ],
@@ -2257,21 +2551,26 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     final esAdmin = provider.esAdminGlobal;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       color: p.surface,
-      child: Row(
-        children: [
-          _configChip(
-            icon: Icons.payments_rounded,
-            label: _metodoPago,
-            onTap: () => _mostrarMetodoPagoMobile(context),
-            p: p,
-          ),
-          const SizedBox(width: 8),
-          if (esAdmin)
-            Expanded(child: _sucursalDropdown(context, provider, p)),
-          if (!esAdmin) const Spacer(),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            _configChip(
+              icon: Icons.payments_rounded,
+              label: _metodoPago,
+              onTap: () => _mostrarMetodoPagoMobile(context),
+              p: p,
+            ),
+            const SizedBox(width: 8),
+            _fechaVentaChip(context, p),
+            const SizedBox(width: 8),
+            _imprimirFacturaChip(p),
+            const SizedBox(width: 8),
+            if (esAdmin) _sucursalDropdown(context, provider, p),
+          ],
+        ),
       ),
     );
   }
@@ -2334,7 +2633,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ✅ NUEVO: Empty state con botón directo al picker
   Widget _mobileEmptyCart(
       BuildContext context, AppProvider provider, _P p) {
     return Center(
@@ -2445,7 +2743,6 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
     );
   }
 
-  // ─── CART ITEM MOBILE
   Widget _cartItemMobile(
     BuildContext context,
     ItemVenta item,
@@ -2478,9 +2775,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
             Row(
               children: [
                 GestureDetector(
-                  onTap: () => _abrirPickerProductos(
-                    context,
-                  ),
+                  onTap: () => _abrirPickerProductos(context),
                   child: hasProduct
                       ? CachedProductImage(
                           url: producto.imageUrl,
@@ -3442,7 +3737,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   }
 
   // ============================================================
-  //  ✅ REGISTRO DE VENTA
+  //  REGISTRO DE VENTA CON IMPRESIÓN
   // ============================================================
   Future<void> _registrarVenta() async {
     if (_isSaving) return;
@@ -3466,6 +3761,16 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
       if (_totalGeneral <= 0) {
         mostrarSnackBar(
           mensaje: 'El total debe ser mayor que 0',
+          esExito: false,
+        );
+        setState(() => _isSaving = false);
+        return;
+      }
+
+      final ahora = DateTime.now();
+      if (_fechaVenta.isAfter(ahora)) {
+        mostrarSnackBar(
+          mensaje: 'La fecha de la venta no puede ser futura',
           esExito: false,
         );
         setState(() => _isSaving = false);
@@ -3512,12 +3817,26 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
         }
       }
 
-      final now = DateTime.now();
+      final fechaVenta = _fechaVenta;
       final groupId = const Uuid().v4();
       final esUSD = _metodoPago == 'Efectivo USD';
       final moneda = esUSD ? 'USD' : 'CUP';
       final tasa = provider.tasaCambioUSD;
+      final notaTexto = _notaCtrl.text.trim();
 
+      // Snapshot de items ANTES de guardar (para la factura)
+      final itemsParaFactura = <Map<String, dynamic>>[];
+      for (final item in _items) {
+        final producto = provider.getProductoById(item.productoId!);
+        if (producto == null) continue;
+        itemsParaFactura.add({
+          'nombre': producto.nombre,
+          'cantidad': item.cantidad,
+          'total': item.cantidad * item.precio,
+        });
+      }
+
+      // Guardar todas las ventas
       for (final item in _items) {
         final producto = provider.getProductoById(item.productoId!);
         if (producto == null) continue;
@@ -3531,10 +3850,8 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
           precioUnitario: item.precio,
           total: total,
           metodoPago: _metodoPago,
-          fecha: now,
-          nota: _notaCtrl.text.trim().isEmpty
-              ? 'Venta múltiple'
-              : _notaCtrl.text.trim(),
+          fecha: fechaVenta,
+          nota: notaTexto.isEmpty ? 'Venta múltiple' : notaTexto,
           clienteId: _clienteId,
           costoUnitario: 0,
           costoTotal: 0,
@@ -3569,8 +3886,59 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
         }
       }
 
-      mostrarSnackBar(
-          mensaje: 'Venta registrada exitosamente', esExito: true);
+      // ✅ IMPRESIÓN DE FACTURA
+      bool impreso = false;
+      if (_imprimirFactura) {
+        try {
+          // Construir una Venta "resumen" solo para la factura
+          final ventaResumen = Venta(
+            id: groupId,
+            productoId: '',
+            productoNombre: 'Venta múltiple',
+            cantidad: 1,
+            precioUnitario: _totalGeneral,
+            total: _totalGeneral,
+            metodoPago: _metodoPago,
+            fecha: fechaVenta,
+            nota: notaTexto.isEmpty ? null : notaTexto,
+            costoUnitario: 0,
+            costoTotal: 0,
+            clienteId: _clienteId,
+          );
+
+          final nombreCliente = _clienteId != null
+              ? provider.clientes
+                  .firstWhere((c) => c.id == _clienteId)
+                  .nombre
+              : null;
+
+          impreso = await PrinterService.instance.printSale(
+            venta: ventaResumen,
+            items: itemsParaFactura,
+            empresaNombre: provider.nombreEmpresa ?? 'Mi Empresa',
+            clienteNombre: nombreCliente,
+            subtotal: _totalGeneral,
+          );
+        } catch (e) {
+          // No bloquear: la venta ya está guardada
+          debugPrint('⚠️ Error de impresión: $e');
+          impreso = false;
+        }
+      }
+
+      // Mensaje final
+      final baseMensaje = _esFechaPersonalizada
+          ? 'Venta del ${DateFormat('dd/MM/yyyy').format(fechaVenta)} registrada'
+          : 'Venta registrada exitosamente';
+
+      String mensajeFinal = baseMensaje;
+      if (_imprimirFactura && impreso) {
+        mensajeFinal = '$baseMensaje · Factura impresa';
+      } else if (_imprimirFactura && !impreso) {
+        mensajeFinal = '$baseMensaje (impresión pendiente)';
+      }
+
+      mostrarSnackBar(mensaje: mensajeFinal, esExito: true);
       _limpiarVenta();
       if (mounted) Navigator.pop(context);
     } catch (e) {
@@ -3590,7 +3958,7 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
 }
 
 // ============================================================
-//  ✅ NUEVO · PICKER DE PRODUCTOS CON CATEGORÍAS (MÓVIL)
+//  PICKER DE PRODUCTOS CON CATEGORÍAS (MÓVIL)
 // ============================================================
 class _ProductPickerSheet extends StatefulWidget {
   final AppProvider provider;
@@ -3625,7 +3993,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
     super.dispose();
   }
 
-  // ─── Categorías con productos (misma lógica que la pantalla)
   List<String> get _categoriasConProductos {
     final base = _productosBase;
     final ids = <String>{};
@@ -3703,7 +4070,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
           ),
           child: Column(
             children: [
-              // Handle
               Padding(
                 padding: const EdgeInsets.only(top: 10, bottom: 6),
                 child: Container(
@@ -3716,7 +4082,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ),
               ),
 
-              // Header
               Padding(
                 padding: const EdgeInsets.fromLTRB(20, 4, 12, 10),
                 child: Row(
@@ -3770,7 +4135,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ),
               ),
 
-              // Buscador
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
                 child: Container(
@@ -3808,7 +4172,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
                 ),
               ),
 
-              // Chips de categoría (solo las que tienen productos)
               if (cats.isNotEmpty)
                 SizedBox(
                   height: 36,
@@ -3840,7 +4203,6 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
 
               const SizedBox(height: 8),
 
-              // Grid de productos
               Expanded(
                 child: productos.isEmpty
                     ? _emptyState(p)
@@ -4110,7 +4472,7 @@ class _ProductPickerSheetState extends State<_ProductPickerSheet> {
 }
 
 // ============================================================
-//  SEARCH DELEGATE (CON IMÁGENES cacheadas)
+//  SEARCH DELEGATE
 // ============================================================
 class _ProductoSearchDelegate extends SearchDelegate<Producto?> {
   final List<Producto> productos;

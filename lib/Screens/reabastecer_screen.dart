@@ -2,6 +2,8 @@
 //  reabastecer_screen.dart  ·  NEXORA BUSINESS
 //  Reabastecer producto con estilo Nexora
 //  · Selector premium, tarjetas modernas, control de cantidad
+//  · Proveedor opcional (solo admin/gestor) → se registra en Compra
+//  · Nota opcional (todos los roles) → se registra en Compra
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -56,6 +58,7 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
   String? _proveedorId;
   final _cantidadCtrl = TextEditingController();
   final _precioCtrl = TextEditingController();
+  final _notaCtrl = TextEditingController();  // ✅ NUEVO
   final _formKey = GlobalKey<FormState>();
   bool _cargando = false;
 
@@ -93,6 +96,7 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
   void dispose() {
     _cantidadCtrl.dispose();
     _precioCtrl.dispose();
+    _notaCtrl.dispose();
     _repeticionTimer?.cancel();
     super.dispose();
   }
@@ -171,6 +175,7 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final isAdmin = provider.rol == 'admin' || provider.rol == 'dueno';
     final esGestor = provider.rol == 'gestor' || provider.rol == 'gerente';
+    final puedeAsignarProveedor = isAdmin || esGestor;
 
     final productosBase = provider.productos.where((p) {
       if (isAdmin || esGestor) return true;
@@ -245,10 +250,13 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                           _priceCard(context, isDark),
                           const SizedBox(height: 14),
                           _quantityCard(context, isDark),
-                          if (isAdmin) ...[
+                          if (puedeAsignarProveedor) ...[
                             const SizedBox(height: 14),
                             _providerCard(context, isDark, provider),
                           ],
+                          // ✅ NUEVO · Tarjeta de nota (todos los roles)
+                          const SizedBox(height: 14),
+                          _noteCard(context, isDark),
                         ],
                       ),
                     ),
@@ -973,7 +981,7 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
   }
 
   // ------------------------------------------------------------
-  //  TARJETA PROVEEDOR (solo admin)
+  //  TARJETA PROVEEDOR (solo admin/gestor · opcional)
   // ------------------------------------------------------------
   Widget _providerCard(BuildContext context, bool isDark, AppProvider provider) {
     return Container(
@@ -1022,18 +1030,42 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Proveedor',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -.2,
-                        color: isDark ? _N.textDark : _N.textLight,
-                      ),
+                    Row(
+                      children: [
+                        Text(
+                          'Proveedor',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.2,
+                            color: isDark ? _N.textDark : _N.textLight,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (isDark ? _N.textMuteDark : _N.textMuteLight)
+                                .withOpacity(.15),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            'OPCIONAL',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .4,
+                              color:
+                                  isDark ? _N.textSoftDark : _N.textSoftLight,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Opcional · Se actualizará la deuda',
+                      'Se registra en el historial de compras',
                       style: TextStyle(
                         fontSize: 11.5,
                         color: isDark ? _N.textSoftDark : _N.textSoftLight,
@@ -1102,6 +1134,154 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
               ),
             ],
             onChanged: (value) => setState(() => _proveedorId = value),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------
+  //  ✅ NUEVO · TARJETA NOTA (siempre visible · opcional)
+  // ------------------------------------------------------------
+  Widget _noteCard(BuildContext context, bool isDark) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: isDark ? _N.surfaceDark : Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: isDark ? _N.borderDark : _N.borderLight,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(isDark ? .25 : .03),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      _N.accent.withOpacity(.18),
+                      _N.accent.withOpacity(.05),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.notes_rounded,
+                  color: _N.accent,
+                  size: 19,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          'Nota',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: -.2,
+                            color: isDark ? _N.textDark : _N.textLight,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (isDark ? _N.textMuteDark : _N.textMuteLight)
+                                .withOpacity(.15),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            'OPCIONAL',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: .4,
+                              color:
+                                  isDark ? _N.textSoftDark : _N.textSoftLight,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Factura, referencia o comentario',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: isDark ? _N.textSoftDark : _N.textSoftLight,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextFormField(
+            controller: _notaCtrl,
+            maxLines: 2,
+            textCapitalization: TextCapitalization.sentences,
+            style: TextStyle(
+              fontSize: 13.5,
+              fontWeight: FontWeight.w500,
+              color: isDark ? _N.textDark : _N.textLight,
+            ),
+            decoration: InputDecoration(
+              hintText: 'Ej: Factura #1234 · Entrega lunes · Pago pendiente…',
+              hintStyle: TextStyle(
+                fontSize: 12.5,
+                color: isDark ? _N.textMuteDark : _N.textMuteLight,
+              ),
+              prefixIcon: Padding(
+                padding: const EdgeInsets.only(bottom: 24),
+                child: Icon(
+                  Icons.edit_note_rounded,
+                  color: _N.accent,
+                  size: 20,
+                ),
+              ),
+              filled: true,
+              fillColor: isDark ? _N.surfaceDark2 : _N.bgLight,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 12,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide.none,
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: BorderSide(
+                  color: isDark ? _N.borderDark : _N.borderLight,
+                  width: 1.2,
+                ),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+                borderSide: const BorderSide(color: _N.primary, width: 1.6),
+              ),
+            ),
           ),
         ],
       ),
@@ -1192,7 +1372,6 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                 ),
                 child: Column(
                   children: [
-                    // Handle
                     Padding(
                       padding: const EdgeInsets.only(top: 10, bottom: 4),
                       child: Container(
@@ -1204,7 +1383,6 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                         ),
                       ),
                     ),
-                    // Título
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
                       child: Row(
@@ -1251,7 +1429,6 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                         ],
                       ),
                     ),
-                    // Búsqueda
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
                       child: TextField(
@@ -1296,7 +1473,6 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
                         ),
                       ),
                     ),
-                    // Lista
                     Expanded(
                       child: filtrados.isEmpty
                           ? Center(
@@ -1552,38 +1728,58 @@ class _ReabastecerScreenState extends State<ReabastecerScreen> {
   }
 
   // ============================================================
-  //  REABASTECER
+  //  ✅ REABASTECER · con proveedor + nota opcionales
   // ============================================================
   Future<void> _reabastecer() async {
     if (_formKey.currentState!.validate() && _productoId != null) {
       final provider = Provider.of<AppProvider>(context, listen: false);
       final cantidad = double.parse(_cantidadCtrl.text);
       final precio = double.parse(_precioCtrl.text);
+      final notaTexto = _notaCtrl.text.trim();
+      final notaFinal = notaTexto.isEmpty ? null : notaTexto;
 
       setState(() => _cargando = true);
 
       try {
-        await provider.reabastecerProducto(_productoId!, cantidad, precio);
+        // ✅ Proveedor y nota opcionales pasan a reabastecerProducto
+        await provider.reabastecerProducto(
+          _productoId!,
+          cantidad,
+          precio,
+          proveedorId: _proveedorId,
+          nota: notaFinal,
+        );
 
+        // Actualizar saldo pendiente del cliente (comportamiento existente)
         if (_proveedorId != null &&
             (provider.rol == 'admin' || provider.rol == 'dueno')) {
-          final proveedor =
-              provider.clientes.firstWhere((c) => c.id == _proveedorId);
-          proveedor.saldoPendiente =
-              (proveedor.saldoPendiente ?? 0) + (cantidad * precio);
-          await provider.editarCliente(proveedor);
-          mostrarSnackBar(
-            mensaje: 'Reabastecimiento registrado. Deuda con proveedor actualizada.',
-            esExito: true,
-          );
+          try {
+            final proveedor = provider.clientes
+                .firstWhere((c) => c.id == _proveedorId);
+            proveedor.saldoPendiente =
+                (proveedor.saldoPendiente ?? 0) + (cantidad * precio);
+            await provider.editarCliente(proveedor);
+            mostrarSnackBar(
+              mensaje:
+                  'Reabastecimiento registrado. Deuda con proveedor actualizada.',
+              esExito: true,
+            );
+          } catch (_) {
+            mostrarSnackBar(
+              mensaje: 'Reabastecimiento exitoso',
+              esExito: true,
+            );
+          }
         } else {
           mostrarSnackBar(mensaje: 'Reabastecimiento exitoso', esExito: true);
         }
 
+        // Reset de campos
         _cantidad = 1.0;
         _cantidadCtrl.text = '1.0';
         _precioCtrl.clear();
         _proveedorId = null;
+        _notaCtrl.clear();  // ✅ Limpiar nota
 
         final producto = provider.getProductoById(_productoId!);
         if (producto != null) {

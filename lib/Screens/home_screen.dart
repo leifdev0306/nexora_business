@@ -1,11 +1,12 @@
 // ============================================================
 //  home_screen.dart  ·  NEXORA BUSINESS
-//  Home v5.3 · "Command Center"
+//  Home v5.4 · "Command Center"
 //  · Carrusel de más vendidos con imágenes y efectos
 //  · Panel "Tienda en línea" (Mi tienda + Red Nexora)
 //  · Panel "Más acciones" con el resto de módulos
-//  · ✅ NUEVO: acceso directo a Categorías (drawer, sidebar, más acciones)
-//  · Command bar simplificada (solo lo esencial)
+//  · Acceso a Historial de Compras (más acciones + sidebar + drawer)
+//  · Stat "Compras del período" en Resumen del negocio
+//  · ✅ Configuración accesible a TODOS los roles
 //  · Manejo de actualización (obligatoria / opcional)
 // ============================================================
 
@@ -53,6 +54,7 @@ class _C {
   static const gradPremium = [Color(0xFFF59E0B), Color(0xFFEC4899), Color(0xFF8B5CF6)];
   static const gradNetwork = [Color(0xFF06B6D4), Color(0xFF3B82F6)];
   static const gradCats    = [Color(0xFFEC4899), Color(0xFF8B5CF6)];
+  static const gradCompras = [Color(0xFF8B5CF6), Color(0xFF6366F1)];
 }
 
 class _P {
@@ -541,6 +543,9 @@ class _HomeScreenState extends State<HomeScreen>
     final catsPropias = provider.categoriasPropias.length;
     final catsBadge = catsPropias > 0 ? '$catsPropias' : null;
 
+    final comprasCount = provider.compras.length;
+    final comprasBadge = comprasCount > 0 ? '$comprasCount' : null;
+
     final excluir = {
       '/mi-tienda',
       '/tiendas',
@@ -552,7 +557,14 @@ class _HomeScreenState extends State<HomeScreen>
     };
 
     final todo = <_QuickAction>[
-      // ✅ NUEVO · Categorías
+      _QuickAction(
+        label: 'Compras',
+        sub: 'Historial de reabastecimientos',
+        icon: Icons.shopping_cart_rounded,
+        route: '__compras__',
+        color: _C.purple,
+        badge: comprasBadge,
+      ),
       _QuickAction(
         label: 'Categorías',
         sub: 'Organiza productos',
@@ -680,21 +692,21 @@ class _HomeScreenState extends State<HomeScreen>
         route: '/soporte',
         color: _C.primary,
       ),
-      if (isAdmin)
-        _QuickAction(
-          label: 'Configuración',
-          sub: 'Ajustes',
-          icon: Icons.settings_rounded,
-          route: '/settings',
-          color: _C.muted,
-        ),
+      // ✅ Configuración visible para TODOS los roles
+      _QuickAction(
+        label: 'Configuración',
+        sub: 'Ajustes',
+        icon: Icons.settings_rounded,
+        route: '/settings',
+        color: _C.muted,
+      ),
     ];
 
     return todo.where((a) => !excluir.contains(a.route)).toList();
   }
 
   // ============================================================
-  //  COMMAND BAR · orden derecha → izquierda por importancia
+  //  COMMAND BAR
   // ============================================================
   List<_CommandItem> _commandItems(AppProvider provider) {
     final agotados =
@@ -731,6 +743,518 @@ class _HomeScreenState extends State<HomeScreen>
         level: 2,
       ),
     ];
+  }
+
+  // ============================================================
+  //  HOJA DE COMPRAS
+  // ============================================================
+  Future<void> _showComprasSheet(BuildContext context) async {
+    final provider = Provider.of<AppProvider>(context, listen: false);
+    final p = _P(Theme.of(context).brightness == Brightness.dark);
+
+    if (provider.compras.isEmpty) {
+      mostrarSnackBar(
+        mensaje:
+            'Aún no hay compras registradas. Reabastece un producto para empezar.',
+        esExito: false,
+      );
+      return;
+    }
+
+    int periodoIdx = 2;
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          DateTime inicio;
+          DateTime fin;
+          String periodoLabel;
+          switch (periodoIdx) {
+            case 0:
+              inicio = provider.hoy;
+              fin = provider.hoy.add(const Duration(days: 1));
+              periodoLabel = 'Hoy';
+              break;
+            case 1:
+              inicio = provider.inicioSemana;
+              fin = provider.finSemana;
+              periodoLabel = 'Esta semana';
+              break;
+            case 2:
+              inicio = provider.inicioMes;
+              fin = provider.finMes;
+              periodoLabel = 'Este mes';
+              break;
+            default:
+              inicio = DateTime(2000);
+              fin = DateTime(2100);
+              periodoLabel = 'Todo';
+          }
+
+          final compras = provider.comprasPorPeriodo(inicio, fin);
+          final total =
+              compras.fold<double>(0, (s, c) => s + c.total);
+          final totalUnidades =
+              compras.fold<double>(0, (s, c) => s + c.cantidad);
+
+          return DraggableScrollableSheet(
+            initialChildSize: 0.9,
+            maxChildSize: 0.96,
+            minChildSize: 0.5,
+            expand: false,
+            builder: (ctx, scrollCtrl) => Container(
+              decoration: BoxDecoration(
+                color: p.surface,
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10, bottom: 4),
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: p.border,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 12, 12),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            gradient: const LinearGradient(
+                                colors: _C.gradCompras),
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _C.purple.withOpacity(.30),
+                                blurRadius: 14,
+                                offset: const Offset(0, 5),
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                              Icons.shopping_cart_rounded,
+                              color: Colors.white,
+                              size: 21),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Historial de compras',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: -.3,
+                                  color: p.textHigh,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                '$periodoLabel · ${compras.length} registro${compras.length == 1 ? '' : 's'}',
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  color: p.textMuted,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: Icon(Icons.close_rounded,
+                              color: p.textMuted),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        _periodChip(
+                            label: 'Hoy',
+                            selected: periodoIdx == 0,
+                            p: p,
+                            onTap: () =>
+                                setLocal(() => periodoIdx = 0)),
+                        const SizedBox(width: 8),
+                        _periodChip(
+                            label: 'Semana',
+                            selected: periodoIdx == 1,
+                            p: p,
+                            onTap: () =>
+                                setLocal(() => periodoIdx = 1)),
+                        const SizedBox(width: 8),
+                        _periodChip(
+                            label: 'Mes',
+                            selected: periodoIdx == 2,
+                            p: p,
+                            onTap: () =>
+                                setLocal(() => periodoIdx = 2)),
+                        const SizedBox(width: 8),
+                        _periodChip(
+                            label: 'Todo',
+                            selected: periodoIdx == 3,
+                            p: p,
+                            onTap: () =>
+                                setLocal(() => periodoIdx = 3)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  if (compras.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              _C.purple.withOpacity(p.dark ? .16 : .08),
+                              _C.indigo.withOpacity(.04),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                              color: _C.purple.withOpacity(.28)),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _totalBlock(
+                                'Invertido',
+                                '\$${_fmt(total)}',
+                                _C.purple,
+                                p,
+                              ),
+                            ),
+                            Container(
+                              width: 1,
+                              height: 36,
+                              color: p.border,
+                            ),
+                            Expanded(
+                              child: _totalBlock(
+                                'Unidades',
+                                _fmt(totalUnidades),
+                                _C.indigo,
+                                p,
+                              ),
+                            ),
+                            Container(
+                              width: 1,
+                              height: 36,
+                              color: p.border,
+                            ),
+                            Expanded(
+                              child: _totalBlock(
+                                'Compras',
+                                '${compras.length}',
+                                _C.cyan,
+                                p,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  const SizedBox(height: 12),
+
+                  Expanded(
+                    child: compras.isEmpty
+                        ? _emptyCompras(p)
+                        : ListView.builder(
+                            controller: scrollCtrl,
+                            padding: const EdgeInsets.fromLTRB(
+                                16, 0, 16, 20),
+                            physics: const BouncingScrollPhysics(),
+                            itemCount: compras.length,
+                            itemBuilder: (_, i) {
+                              final c = compras[i];
+                              return _compraTile(c, p);
+                            },
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _periodChip({
+    required String label,
+    required bool selected,
+    required _P p,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: selected ? Colors.transparent : p.surface2,
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(colors: _C.gradCompras)
+                : null,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+              color: selected
+                  ? Colors.transparent
+                  : p.borderStrong,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: _C.purple.withOpacity(.32),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight:
+                  selected ? FontWeight.w900 : FontWeight.w600,
+              color: selected ? Colors.white : p.textMid,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _totalBlock(
+      String label, String value, Color color, _P p) {
+    return Column(
+      children: [
+        Text(
+          label.toUpperCase(),
+          style: TextStyle(
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .6,
+            color: p.textMuted,
+          ),
+        ),
+        const SizedBox(height: 3),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -.3,
+              color: color,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _compraTile(Compra c, _P p) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: p.surface2,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: p.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  _C.purple.withOpacity(.20),
+                  _C.indigo.withOpacity(.06),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(
+                  color: _C.purple.withOpacity(.24)),
+            ),
+            child: const Icon(
+              Icons.shopping_cart_rounded,
+              size: 18,
+              color: _C.purple,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  c.productoNombre,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: p.textHigh,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  children: [
+                    Icon(Icons.calendar_today_rounded,
+                        size: 10, color: p.textMuted),
+                    const SizedBox(width: 3),
+                    Text(
+                      DateFormat('dd/MM · HH:mm').format(c.fecha),
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: p.textMuted,
+                      ),
+                    ),
+                    if (c.proveedorNombre != null &&
+                        c.proveedorNombre!.isNotEmpty) ...[
+                      const SizedBox(width: 10),
+                      Icon(Icons.business_rounded,
+                          size: 10, color: p.textMuted),
+                      const SizedBox(width: 3),
+                      Flexible(
+                        child: Text(
+                          c.proveedorNombre!,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: p.textMuted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                if (c.nota != null && c.nota!.isNotEmpty) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    c.nota!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontStyle: FontStyle.italic,
+                      color: p.textMuted,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '\$${_fmt(c.total)}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.3,
+                  color: _C.purple,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '${_fmt(c.cantidad)} × \$${c.precioUnitario.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: p.textMuted,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyCompras(_P p) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    _C.purple.withOpacity(.16),
+                    _C.indigo.withOpacity(.06),
+                  ],
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.shopping_cart_outlined,
+                size: 36,
+                color: _C.purple,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Sin compras en este período',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: p.textHigh,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Cuando reabastezcas productos,\naquí verás el historial completo.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.5,
+                color: p.textMuted,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ============================================================
@@ -1199,12 +1723,10 @@ class _HomeScreenState extends State<HomeScreen>
                       _staggered(5, _compactSummary(context, provider, p)),
                       const SizedBox(height: 20),
 
-                      // ─── Panel · Tienda en línea
                       _staggered(
                           6, _tiendaEnLineaPanel(context, provider, p)),
                       const SizedBox(height: 20),
 
-                      // ─── Más vendidos (carrusel con imágenes)
                       if (provider
                           .getProductosMasVendidos(
                               provider.inicioPeriodo, provider.finPeriodo)
@@ -1233,7 +1755,6 @@ class _HomeScreenState extends State<HomeScreen>
                         const SizedBox(height: 22),
                       ],
 
-                      // ─── Panel · Más acciones
                       _staggered(8, _moreActionsPanel(context, provider, p)),
                       const SizedBox(height: 22),
 
@@ -1806,6 +2327,11 @@ class _HomeScreenState extends State<HomeScreen>
     final gastos = provider.getTotalGastos(
         provider.inicioPeriodo, provider.finPeriodo);
 
+    final comprasPeriodo = provider.comprasPorPeriodo(
+        provider.inicioPeriodo, provider.finPeriodo);
+    final totalCompras = provider.getTotalCompras(
+        provider.inicioPeriodo, provider.finPeriodo);
+
     final stats = <Map<String, dynamic>>[
       {
         'label': 'Ventas',
@@ -1833,7 +2359,14 @@ class _HomeScreenState extends State<HomeScreen>
           'icon': Icons.inventory_2_rounded,
           'color': _C.purple,
         },
-      if (isManager)
+      if (isManager && comprasPeriodo.isNotEmpty)
+        {
+          'label': 'Compras',
+          'value': '\$${_fmtCompact(totalCompras)}',
+          'icon': Icons.shopping_cart_rounded,
+          'color': _C.purple,
+        }
+      else if (isManager)
         {
           'label': 'Gastos',
           'value': '\$${_fmtCompact(gastos)}',
@@ -2891,7 +3424,13 @@ class _HomeScreenState extends State<HomeScreen>
     return _HoverTile(
       p: p,
       color: a.color,
-      onTap: () => Navigator.pushNamed(context, a.route),
+      onTap: () {
+        if (a.route == '__compras__') {
+          _showComprasSheet(context);
+          return;
+        }
+        Navigator.pushNamed(context, a.route);
+      },
       builder: (hovered) => Container(
         padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
         decoration: BoxDecoration(
@@ -3713,6 +4252,7 @@ class _HomeScreenState extends State<HomeScreen>
     final isManager = _isManager(provider);
 
     final catsPropias = provider.categoriasPropias.length;
+    final comprasCount = provider.compras.length;
 
     return Container(
       width: 250,
@@ -3860,7 +4400,19 @@ class _HomeScreenState extends State<HomeScreen>
                   if (isManager)
                     _sideItem(context, provider, 'Inventario',
                         Icons.inventory_2_rounded, '/productos', p),
-                  // ✅ NUEVO · Categorías en sidebar
+                  if (isManager)
+                    _sideItem(context, provider, 'Reabastecer',
+                        Icons.add_box_rounded, '/reabastecer', p),
+                  if (isManager)
+                    _sideItem(
+                      context,
+                      provider,
+                      'Compras',
+                      Icons.shopping_cart_rounded,
+                      '__compras__',
+                      p,
+                      accent: _C.purple,
+                    ),
                   if (isManager)
                     _sideItem(
                       context,
@@ -3871,9 +4423,6 @@ class _HomeScreenState extends State<HomeScreen>
                       p,
                       accent: _C.pink,
                     ),
-                  if (isManager)
-                    _sideItem(context, provider, 'Reabastecer',
-                        Icons.add_box_rounded, '/reabastecer', p),
                   if (isManager)
                     _sideItem(context, provider, 'Clientes',
                         Icons.people_alt_rounded, '/clientes', p),
@@ -4006,9 +4555,10 @@ class _HomeScreenState extends State<HomeScreen>
                         Icons.payments_rounded, '/nominas', p),
                     _sideItem(context, provider, 'Realizar pago',
                         Icons.account_balance_wallet_rounded, '/pago', p),
-                    _sideItem(context, provider, 'Configuración',
-                        Icons.settings_rounded, '/settings', p),
                   ],
+                  // ✅ Configuración visible para TODOS los roles
+                  _sideItem(context, provider, 'Configuración',
+                      Icons.settings_rounded, '/settings', p),
                   if (isManager)
                     _sideItem(context, provider, 'Módulo fiscal',
                         Icons.request_quote_rounded, '/fiscal', p),
@@ -4090,6 +4640,56 @@ class _HomeScreenState extends State<HomeScreen>
                         ),
                       ],
                     ),
+                    if (comprasCount > 0) ...[
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          const Icon(Icons.shopping_cart_rounded,
+                              size: 12, color: _C.purple),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '$comprasCount compra${comprasCount == 1 ? '' : 's'} registrada${comprasCount == 1 ? '' : 's'}',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: p.textMid,
+                              ),
+                            ),
+                          ),
+                          InkWell(
+                            borderRadius: BorderRadius.circular(6),
+                            onTap: () => _showComprasSheet(context),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 2),
+                              child: Icon(Icons.chevron_right_rounded,
+                                  size: 14, color: _C.purple),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                    if (catsPropias > 0) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Icon(Icons.category_rounded,
+                              size: 12, color: _C.pink),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '$catsPropias categoría${catsPropias == 1 ? '' : 's'} propias',
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: p.textMid,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
@@ -4218,6 +4818,10 @@ class _HomeScreenState extends State<HomeScreen>
                 context,
                 MaterialPageRoute(builder: (_) => const TermsScreen()),
               );
+              return;
+            }
+            if (route == '__compras__') {
+              _showComprasSheet(context);
               return;
             }
             if (route == '/') return;
@@ -5848,7 +6452,19 @@ class _HomeScreenState extends State<HomeScreen>
           if (isManager)
             _drawerItem(context, provider, 'Inventario',
                 Icons.inventory_2_rounded, '/productos', p),
-          // ✅ NUEVO · Categorías en drawer
+          if (isManager)
+            _drawerItem(context, provider, 'Reabastecer',
+                Icons.add_box_rounded, '/reabastecer', p),
+          if (isManager)
+            _drawerItem(
+              context,
+              provider,
+              'Compras',
+              Icons.shopping_cart_rounded,
+              '__compras__',
+              p,
+              accent: _C.purple,
+            ),
           if (isManager)
             _drawerItem(
               context,
@@ -5859,9 +6475,6 @@ class _HomeScreenState extends State<HomeScreen>
               p,
               accent: _C.pink,
             ),
-          if (isManager)
-            _drawerItem(context, provider, 'Reabastecer',
-                Icons.add_box_rounded, '/reabastecer', p),
           if (isManager)
             _drawerItem(context, provider, 'Clientes',
                 Icons.people_alt_rounded, '/clientes', p),
@@ -5929,9 +6542,10 @@ class _HomeScreenState extends State<HomeScreen>
                 Icons.payments_rounded, '/nominas', p),
             _drawerItem(context, provider, 'Realizar pago',
                 Icons.account_balance_wallet_rounded, '/pago', p),
-            _drawerItem(context, provider, 'Configuración',
-                Icons.settings_rounded, '/settings', p),
           ],
+          // ✅ Configuración visible para TODOS los roles
+          _drawerItem(context, provider, 'Configuración',
+              Icons.settings_rounded, '/settings', p),
           if (isManager)
             _drawerItem(context, provider, 'Módulo fiscal',
                 Icons.request_quote_rounded, '/fiscal', p),
@@ -6074,6 +6688,10 @@ class _HomeScreenState extends State<HomeScreen>
           );
           return;
         }
+        if (route == '__compras__') {
+          _showComprasSheet(context);
+          return;
+        }
         Navigator.pushNamed(context, route);
       },
     );
@@ -6081,7 +6699,7 @@ class _HomeScreenState extends State<HomeScreen>
 }
 
 // ============================================================
-//  WIDGET · HOVER TILE (para retoques de hover en desktop)
+//  WIDGET · HOVER TILE
 // ============================================================
 class _HoverTile extends StatefulWidget {
   final _P p;
