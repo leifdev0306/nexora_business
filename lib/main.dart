@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform, File;
 import 'dart:math';
 import 'dart:convert';
-
+import 'services/printer_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -67,7 +67,7 @@ import 'widgets/cached_product_image.dart';
 part 'main.g.dart';
 
 const String APP_NAME = 'Nexora Business';
-const String APP_VERSION = '2.6.6';
+const String APP_VERSION = '2.6.9';
 
 const String supabaseUrl = 'https://kmqffbxzzfbfrcbsluqs.supabase.co';
 const String supabaseAnonKey =
@@ -7307,6 +7307,10 @@ void main() async {
   Hive.registerAdapter(MermaAdapter());
   Hive.registerAdapter(MovimientoSucursalAdapter());
   Hive.registerAdapter(DeudaAdapter());
+
+  // ✅ Detección automática de impresora al arrancar (no bloquea el arranque)
+  unawaited(PrinterService.instance.initialize());
+
   runApp(const MyApp());
 }
 

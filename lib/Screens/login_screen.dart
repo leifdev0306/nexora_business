@@ -2,13 +2,14 @@
 //  login_screen.dart  ·  NEXORA BUSINESS
 //  · Logo real (assets/logo.png) en lugar del icono de cohete
 //  · Paleta Azul Eléctrico #1A5CFF + Cyan #06B6D4
-//  · Muestra el error crudo en el fallback para diagnóstico
+//  · ✅ Errores traducidos a mensajes amigables
 // ============================================================
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart'
-    show AuthException, Supabase;
+    show AuthException, PostgrestException, Supabase;
 import 'package:nexora_business/responsive_helper.dart';
 import '../main.dart';
 
@@ -91,59 +92,171 @@ class _LoginScreenState extends State<LoginScreen>
     super.dispose();
   }
 
-  String _traducirError(Object e) {
-    if (e is AuthException) {
-      final code = (e.statusCode ?? '').toString();
-      final msg = e.message.toLowerCase();
-
-      if (msg.contains('email not confirmed') ||
-          msg.contains('email_not_confirmed')) {
-        return 'Debes confirmar tu correo antes de iniciar sesión.';
-      }
-      if (msg.contains('invalid login credentials') ||
-          msg.contains('invalid_grant')) {
-        return 'Correo o contraseña incorrectos.';
-      }
-      if (msg.contains('user already registered') ||
-          msg.contains('already registered')) {
-        return 'Este correo ya está registrado. Inicia sesión.';
-      }
-      if (msg.contains('password should be at least') ||
-          msg.contains('password is too short')) {
-        return 'La contraseña debe tener al menos 6 caracteres.';
-      }
-      if (msg.contains('rate limit') || msg.contains('too many')) {
-        return 'Demasiados intentos. Espera un momento.';
-      }
-      return 'Error de autenticación ($code): ${e.message}';
+  // ══════════════════════════════════════════════════════════
+  //  ✅ TRADUCCIÓN DE ERRORES
+  //  Nunca exponemos detalles técnicos al usuario. Solo se
+  //  registran en el log de desarrollo para diagnóstico.
+  // ══════════════════════════════════════════════════════════
+  String _humanError(Object? e) {
+    if (e == null) {
+      return 'Ocurrió un error inesperado. Intenta de nuevo.';
     }
 
+    // Log solo para desarrolladores
+    debugPrint('🔴 [Login] Error: $e');
+
+    // ── 1) AuthException (Supabase Auth)
+    if (e is AuthException) {
+      final msg = e.message.toLowerCase();
+      final code = (e.statusCode ?? '').toString().toLowerCase();
+      final combined = '$msg $code';
+
+      if (combined.contains('email not confirmed') ||
+          combined.contains('email_not_confirmed')) {
+        return 'Debes confirmar tu correo antes de entrar. Revisa tu bandeja.';
+      }
+      if (combined.contains('invalid login') ||
+          combined.contains('invalid_grant') ||
+          combined.contains('invalid_credentials')) {
+        return 'Correo o contraseña incorrectos. Intenta de nuevo.';
+      }
+      if (combined.contains('user already') ||
+          combined.contains('already registered') ||
+          combined.contains('email_exists')) {
+        return 'Este correo ya está registrado. Inicia sesión.';
+      }
+      if (combined.contains('weak_password') ||
+          combined.contains('password should be') ||
+          combined.contains('password is too short')) {
+        return 'La contraseña es muy débil. Usa al menos 6 caracteres.';
+      }
+      if (combined.contains('rate_limit') ||
+          combined.contains('too many') ||
+          combined.contains('over_email_send')) {
+        return 'Demasiados intentos. Espera un momento e intenta de nuevo.';
+      }
+      if (combined.contains('user_not_found') ||
+          combined.contains('no user found')) {
+        return 'No existe una cuenta con este correo.';
+      }
+      if (combined.contains('session_expired') ||
+          combined.contains('jwt') ||
+          combined.contains('token')) {
+        return 'Tu sesión expiró. Inicia sesión de nuevo.';
+      }
+      if (combined.contains('network') ||
+          combined.contains('timeout') ||
+          combined.contains('connection')) {
+        return 'Sin conexión al servidor. Revisa tu internet.';
+      }
+      return 'No pudimos validar tus datos. Revisa e intenta de nuevo.';
+    }
+
+    // ── 2) PostgrestException (Base de datos)
+    if (e is PostgrestException) {
+      final code = (e.code ?? '').toLowerCase();
+      final msg = e.message.toLowerCase();
+      final combined = '$code $msg';
+
+      if (combined.contains('permission denied') ||
+          combined.contains('row-level security') ||
+          combined.contains('rls') ||
+          code == '42501') {
+        return 'No tienes permisos para esta acción. Contacta al administrador.';
+      }
+      if (combined.contains('duplicate key') ||
+          combined.contains('already exists') ||
+          code == '23505') {
+        return 'Este registro ya existe.';
+      }
+      if (combined.contains('foreign key') || code == '23503') {
+        return 'No se puede completar: hay datos relacionados.';
+      }
+      if (combined.contains('not-null') || code == '23502') {
+        return 'Faltan datos obligatorios.';
+      }
+      if (combined.contains('invalid input syntax') ||
+          code == '22p02') {
+        return 'Algunos datos tienen un formato inválido.';
+      }
+      return 'No pudimos completar la operación. Intenta de nuevo.';
+    }
+
+    // ── 3) Errores de red / IO
     final raw = e.toString();
     final low = raw.toLowerCase();
 
     if (low.contains('socketexception') ||
-        low.contains('network') ||
-        low.contains('timeout') ||
         low.contains('failed host lookup') ||
-        low.contains('connection')) {
-      return 'No pudimos conectar con el servidor. Revisa tu internet.';
+        low.contains('network is unreachable') ||
+        low.contains('no address associated')) {
+      return 'Sin conexión a internet. Revisa tu red e intenta de nuevo.';
     }
-    if (low.contains('no autorizado')) {
-      return 'Problema de sincronización. Vuelve a intentarlo.';
+    if (low.contains('timeout') || low.contains('timed out')) {
+      return 'El servidor tardó demasiado. Intenta de nuevo en un momento.';
     }
-    if (low.contains('ya pertenece a una empresa')) {
+    if (low.contains('connection refused') ||
+        low.contains('connection reset') ||
+        low.contains('connection closed') ||
+        low.contains('clientexception') ||
+        low.contains('connection terminated')) {
+      return 'La conexión se interrumpió. Intenta de nuevo.';
+    }
+
+    // ── 4) Reglas de negocio de la app
+    if (low.contains('ya pertenece a una empresa') ||
+        low.contains('already belong')) {
       return 'Este usuario ya está asociado a una empresa. Inicia sesión.';
     }
-    if (low.contains('violates row-level security') ||
-        low.contains('permission denied')) {
-      return 'No tienes permisos para esta operación.';
+    if (low.contains('no hay empresa') ||
+        low.contains('sin empresa') ||
+        low.contains('empresa no asociada')) {
+      return 'No hay una empresa asociada a tu cuenta.';
+    }
+    if (low.contains('usuario no autenticado') ||
+        low.contains('no autenticado') ||
+        low.contains('not authenticated')) {
+      return 'Inicia sesión para continuar.';
+    }
+    if (low.contains('servicio cancelado') ||
+        low.contains('cuenta cancelada') ||
+        low.contains('empresa inactiva')) {
+      return 'Tu cuenta está suspendida. Contacta a soporte.';
+    }
+    if (low.contains('permission denied') ||
+        low.contains('no autorizado')) {
+      return 'No tienes permisos para esta acción.';
     }
     if (low.contains('duplicate key') || low.contains('already exists')) {
       return 'Este registro ya existe.';
     }
-    return 'Error: $raw';
+
+    // ── 5) Fallback: si el mensaje es corto y legible, se muestra
+    final cleaned = raw.replaceFirst('Exception: ', '').trim();
+    if (cleaned.isNotEmpty &&
+        cleaned.length < 160 &&
+        !_looksTechnical(cleaned)) {
+      return cleaned;
+    }
+
+    return 'Ocurrió un error inesperado. Intenta de nuevo en un momento.';
   }
 
+  bool _looksTechnical(String s) {
+    final low = s.toLowerCase();
+    return low.contains('exception') ||
+        low.contains('stack trace') ||
+        low.contains('#0 ') ||
+        low.contains('postgrest') ||
+        low.contains('sqlstate') ||
+        low.contains('socket') ||
+        low.contains('clientexception') ||
+        RegExp(r'^[a-z_]+_[a-z_]+\(.*\)$').hasMatch(low);
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  ACCIONES
+  // ══════════════════════════════════════════════════════════
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
     if (!_formKey.currentState!.validate()) return;
@@ -155,9 +268,9 @@ class _LoginScreenState extends State<LoginScreen>
     } catch (e) {
       if (!mounted) return;
       mostrarSnackBar(
-        mensaje: _traducirError(e),
+        mensaje: _humanError(e),
         esExito: false,
-        duracion: const Duration(seconds: 12),
+        duracion: const Duration(seconds: 8),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -191,9 +304,9 @@ class _LoginScreenState extends State<LoginScreen>
     } catch (e) {
       if (!mounted) return;
       mostrarSnackBar(
-        mensaje: _traducirError(e),
+        mensaje: _humanError(e),
         esExito: false,
-        duracion: const Duration(seconds: 12),
+        duracion: const Duration(seconds: 8),
       );
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -222,7 +335,10 @@ class _LoginScreenState extends State<LoginScreen>
           mensaje: 'Te enviamos un correo para restablecer tu contraseña',
           esExito: true);
     } catch (e) {
-      mostrarSnackBar(mensaje: _traducirError(e), esExito: false);
+      mostrarSnackBar(
+          mensaje: _humanError(e),
+          esExito: false,
+          duracion: const Duration(seconds: 8));
     }
   }
 

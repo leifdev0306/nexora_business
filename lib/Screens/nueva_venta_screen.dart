@@ -166,15 +166,29 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
         _fechaVenta.day != now.day;
   }
 
-  @override
+    @override
   void initState() {
     super.initState();
     _agregarItem();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // ✅ Detección automática de impresora al entrar al POS
+      final ready =
+          await PrinterService.instance.ensureReady(silent: true);
+      if (!mounted) return;
+
+      if (!ready && _imprimirFactura) {
+        setState(() => _imprimirFactura = false);
+        mostrarSnackBar(
+          mensaje:
+              'No se detectó impresora. La factura no se imprimirá hasta que conectes una.',
+          esExito: false,
+        );
+      }
+
       final provider = Provider.of<AppProvider>(context, listen: false);
       if (provider.esAdminGlobal && provider.sucursales.isNotEmpty) {
-        setState(
-            () => _sucursalIdSeleccionada = provider.sucursales.first.id);
+        setState(() =>
+            _sucursalIdSeleccionada = provider.sucursales.first.id);
       }
       if (mounted) _desktopKeyboardFocus.requestFocus();
     });
@@ -786,69 +800,111 @@ class _NuevaVentaScreenState extends State<NuevaVentaScreen> {
   // ============================================================
   //  ✅ CHIP IMPRESIÓN (reutilizable)
   // ============================================================
-  Widget _imprimirFacturaChip(_P p) {
-    final activo = _imprimirFactura;
-    final color = activo ? _C.purple : p.textMuted;
+    Widget _imprimirFacturaChip(_P p) {
+    return AnimatedBuilder(
+      animation: PrinterService.instance,
+      builder: (context, _) {
+        final svc = PrinterService.instance;
+        final conectada = svc.isConnected;
+        final activo = _imprimirFactura && conectada;
+        final color = activo
+            ? _C.purple
+            : (conectada ? p.textMuted : _C.danger);
 
-    return Material(
-      color: activo ? _C.purple.withOpacity(p.dark ? .14 : .08) : Colors.transparent,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(20),
-        onTap: () => setState(() => _imprimirFactura = !_imprimirFactura),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
+        return Material(
+          color: activo
+              ? _C.purple.withOpacity(p.dark ? .14 : .08)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(20),
+          child: InkWell(
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: activo ? _C.purple.withOpacity(.45) : p.borderStrong,
-              width: activo ? 1.4 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                activo ? Icons.print_rounded : Icons.print_disabled_rounded,
-                size: 15,
-                color: color,
-              ),
-              const SizedBox(width: 7),
-              Text(
-                activo ? 'Imprimir factura' : 'No imprimir',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                  color: color,
+            onTap: () async {
+              if (!_imprimirFactura) {
+                // Está apagado → intentar activar
+                if (!conectada) {
+                  // Verifica de nuevo antes de activar
+                  final listo = await PrinterService.instance
+                      .ensureReady(silent: true);
+                  if (!listo) {
+                    mostrarSnackBar(
+                      mensaje:
+                          'No hay impresora disponible. Conecta la Xprinter por USB y vuelve a intentar.',
+                      esExito: false,
+                    );
+                    return;
+                  }
+                }
+                setState(() => _imprimirFactura = true);
+              } else {
+                setState(() => _imprimirFactura = false);
+              }
+            },
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: activo
+                      ? _C.purple.withOpacity(.45)
+                      : (conectada
+                          ? p.borderStrong
+                          : _C.danger.withOpacity(.45)),
+                  width: activo ? 1.4 : 1,
                 ),
               ),
-              const SizedBox(width: 6),
-              Container(
-                width: 26,
-                height: 14,
-                decoration: BoxDecoration(
-                  color: activo ? _C.purple : p.borderStrong,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 180),
-                  alignment:
-                      activo ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    width: 12,
-                    height: 12,
-                    margin: const EdgeInsets.symmetric(horizontal: 1),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    activo
+                        ? Icons.print_rounded
+                        : Icons.print_disabled_rounded,
+                    size: 15,
+                    color: color,
+                  ),
+                  const SizedBox(width: 7),
+                  Text(
+                    activo
+                        ? 'Imprimir factura'
+                        : (conectada ? 'No imprimir' : 'Sin impresora'),
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: color,
                     ),
                   ),
-                ),
+                  const SizedBox(width: 6),
+                  Container(
+                    width: 26,
+                    height: 14,
+                    decoration: BoxDecoration(
+                      color: activo ? _C.purple : p.borderStrong,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: AnimatedAlign(
+                      duration: const Duration(milliseconds: 180),
+                      alignment: activo
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        margin:
+                            const EdgeInsets.symmetric(horizontal: 1),
+                        decoration: const BoxDecoration(
+                          color: Colors.white,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 

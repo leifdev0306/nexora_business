@@ -1,6 +1,11 @@
 // ============================================================
 //  tienda_detalle_screen.dart
-//  Detalle de tienda · Catálogo · Reseñas · Info
+//  Detalle de tienda · Rediseño premium
+//  · Hero con cover + avatar solapado
+//  · Stats inline
+//  · Acciones rápidas (llamar, WhatsApp, mapa)
+//  · Catálogo con filtros de categoría
+//  · Reseñas con histograma premium
 // ============================================================
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -34,6 +39,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
   List<ResenaPublica> _resenas = [];
   bool _cargando = true;
   String _q = '';
+  String? _catSel;
   final _searchCtrl = TextEditingController();
 
   @override
@@ -55,7 +61,6 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
     final box = provider.catalogosBox;
     TiendaPublica? t;
 
-    // 1) Si es MI tienda → leer del key namespaced
     if (widget.empresaId == provider.empresaId) {
       final raw = box.get(keyTiendaDeEmpresa(widget.empresaId));
       if (raw is Map) {
@@ -64,13 +69,11 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
         if (temp.empresaId == widget.empresaId) t = temp;
       }
     }
-
-    // 2) Si no → buscar en la red
     if (t == null) {
-      final raw =
-          (box.get(kNetworkStoresKey) as List?) ?? [];
+      final raw = (box.get(kNetworkStoresKey) as List?) ?? [];
       for (final e in raw) {
-        final x = TiendaPublica.fromJson(Map<String, dynamic>.from(e));
+        final x =
+            TiendaPublica.fromJson(Map<String, dynamic>.from(e));
         if (x.empresaId == widget.empresaId) {
           t = x;
           break;
@@ -80,7 +83,8 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
 
     final revRaw = (box.get(kNetworkRev) as List?) ?? [];
     final revs = revRaw
-        .map((e) => ResenaPublica.fromJson(Map<String, dynamic>.from(e)))
+        .map((e) =>
+            ResenaPublica.fromJson(Map<String, dynamic>.from(e)))
         .where((r) => r.targetId == widget.empresaId)
         .toList()
       ..sort((a, b) => b.fecha.compareTo(a.fecha));
@@ -116,7 +120,8 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.storefront_rounded, size: 60, color: p.textMuted),
+              Icon(Icons.storefront_rounded,
+                  size: 60, color: p.textMuted),
               const SizedBox(height: 14),
               Text('Tienda no encontrada',
                   style: TextStyle(
@@ -145,17 +150,49 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                 controller: _tabs,
                 indicatorColor: _C.primary,
                 indicatorWeight: 3,
+                indicatorSize: TabBarIndicatorSize.tab,
                 labelColor: _C.primary,
                 unselectedLabelColor: p.textMuted,
                 labelStyle: const TextStyle(
                     fontWeight: FontWeight.w900, fontSize: 13),
-                tabs: const [
-                  Tab(text: 'Catálogo'),
-                  Tab(text: 'Reseñas'),
-                  Tab(text: 'Info'),
+                unselectedLabelStyle: const TextStyle(
+                    fontWeight: FontWeight.w700, fontSize: 13),
+                tabs: [
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.inventory_2_rounded,
+                            size: 15),
+                        const SizedBox(width: 6),
+                        Text('Catálogo (${t.totalProductos})'),
+                      ],
+                    ),
+                  ),
+                  Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.reviews_rounded, size: 15),
+                        const SizedBox(width: 6),
+                        Text('Reseñas (${_resenas.length})'),
+                      ],
+                    ),
+                  ),
+                  const Tab(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.info_rounded, size: 15),
+                        SizedBox(width: 6),
+                        Text('Info'),
+                      ],
+                    ),
+                  ),
                 ],
               ),
               p.surface,
+              p.border,
             ),
           ),
         ],
@@ -172,118 +209,273 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
   }
 
   List<ProductoPublicado> _filtrarCatalogo(TiendaPublica t) {
-    if (_q.isEmpty) return t.catalogo;
-    final q = _q.toLowerCase();
-    return t.catalogo
-        .where((x) =>
-            x.nombre.toLowerCase().contains(q) ||
-            x.categoria.toLowerCase().contains(q))
-        .toList();
+    var lista = t.catalogo;
+    if (_catSel != null) {
+      lista = lista
+          .where((x) =>
+              x.categoria.toLowerCase() == _catSel!.toLowerCase())
+          .toList();
+    }
+    if (_q.isNotEmpty) {
+      final q = _q.toLowerCase();
+      lista = lista
+          .where((x) =>
+              x.nombre.toLowerCase().contains(q) ||
+              x.categoria.toLowerCase().contains(q))
+          .toList();
+    }
+    return lista;
   }
 
+  // ══════════════════════════════════════════════════════════
+  //  HERO (con avatar solapado)
+  // ══════════════════════════════════════════════════════════
   Widget _hero(TiendaPublica t, _P p) {
     final cat = CategoriasPublicas.nombreTienda(t.categoriaId);
     return SliverAppBar(
-      expandedHeight: 240,
+      expandedHeight: 280,
       pinned: true,
       backgroundColor: p.surface,
       foregroundColor: p.textHigh,
       surfaceTintColor: Colors.transparent,
-      flexibleSpace: FlexibleSpaceBar(
-        background: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: _C.gradBrand,
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
+      leading: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Material(
+          color: Colors.black.withOpacity(.35),
+          shape: const CircleBorder(),
+          child: IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back_rounded,
+                color: Colors.white, size: 20),
           ),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 60, 20, 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 64, height: 64,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(.20),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                              color: Colors.white.withOpacity(.32)),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          t.nombre.isNotEmpty
-                              ? t.nombre.substring(0, 1).toUpperCase()
-                              : '?',
-                          style: const TextStyle(
-                            color: Colors.white, fontSize: 28,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(t.nombre,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  color: Colors.white, fontSize: 22,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: -0.5, height: 1.15,
-                                )),
-                            const SizedBox(height: 6),
-                            Wrap(
-                              spacing: 8, runSpacing: 4,
-                              children: [
-                                if (t.rating > 0)
-                                  _chipHero(Icons.star_rounded,
-                                      '${t.rating.toStringAsFixed(1)} · ${t.totalResenas}'),
-                                _chipHero(Icons.category_rounded, cat),
-                                if (t.tieneUbicacion)
-                                  _chipHero(Icons.location_on_rounded,
-                                      'En mapa'),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (t.descripcion.isNotEmpty) ...[
-                    const SizedBox(height: 10),
-                    Text(t.descripcion,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withOpacity(.92),
-                          fontSize: 12.5, height: 1.4,
-                          fontWeight: FontWeight.w500,
-                        )),
-                  ],
-                ],
+        ),
+      ),
+      flexibleSpace: FlexibleSpaceBar(
+        background: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Cover con gradiente
+            Container(
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  colors: _C.gradBrand,
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
               ),
             ),
-          ),
+            // Patrón decorativo
+            Positioned(
+              top: -60,
+              right: -60,
+              child: Container(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(.08),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -80,
+              left: -50,
+              child: Container(
+                width: 220,
+                height: 220,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(.06),
+                ),
+              ),
+            ),
+            // Gradiente negro abajo para contraste
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.transparent,
+                      Colors.black.withOpacity(.55),
+                    ],
+                    stops: const [0.0, 0.55, 1.0],
+                  ),
+                ),
+              ),
+            ),
+            // Contenido
+            SafeArea(
+              child: Padding(
+                padding:
+                    const EdgeInsets.fromLTRB(20, 60, 20, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Container(
+                          width: 76,
+                          height: 76,
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                                color: Colors.white, width: 3),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(.28),
+                                blurRadius: 20,
+                                offset: const Offset(0, 8),
+                              ),
+                            ],
+                          ),
+                          alignment: Alignment.center,
+                          child: Container(
+                            decoration: BoxDecoration(
+                              gradient: const LinearGradient(
+                                colors: _C.gradBrand,
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                              ),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              t.nombre.isNotEmpty
+                                  ? t.nombre[0].toUpperCase()
+                                  : '?',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 32,
+                                fontWeight: FontWeight.w900,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      t.nombre,
+                                      maxLines: 2,
+                                      overflow:
+                                          TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 22,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: -0.5,
+                                        height: 1.1,
+                                        shadows: [
+                                          Shadow(
+                                            color: Colors.black38,
+                                            blurRadius: 6,
+                                            offset: Offset(0, 2),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  if (t.verificado) ...[
+                                    const SizedBox(width: 6),
+                                    const Icon(Icons.verified_rounded,
+                                        size: 20,
+                                        color: Colors.white),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 6,
+                                children: [
+                                  if (t.rating > 0)
+                                    _heroChip(
+                                      Icons.star_rounded,
+                                      '${t.rating.toStringAsFixed(1)} · ${t.totalResenas}',
+                                    ),
+                                  _heroChip(
+                                      Icons.category_rounded, cat),
+                                  if (t.tieneUbicacion)
+                                    _heroChip(
+                                        Icons.location_on_rounded,
+                                        'En mapa'),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                    // Acciones rápidas
+                    Row(
+                      children: [
+                        if (t.telefono != null &&
+                            t.telefono!.isNotEmpty)
+                          Expanded(
+                            child: _quickAction(
+                              icon: Icons.phone_rounded,
+                              label: 'Llamar',
+                              color: _C.info,
+                              onTap: () => _llamar(t.telefono!),
+                            ),
+                          ),
+                        if (t.whatsapp != null &&
+                            t.whatsapp!.isNotEmpty) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _quickAction(
+                              icon: Icons.chat_rounded,
+                              label: 'WhatsApp',
+                              color: _C.success,
+                              onTap: () => _whatsapp(t.whatsapp!),
+                            ),
+                          ),
+                        ],
+                        if (t.tieneUbicacion) ...[
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _quickAction(
+                              icon: Icons.directions_rounded,
+                              label: 'Ir',
+                              color: _C.purple,
+                              onTap: () => _abrirComoLlegar(t),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _chipHero(IconData icon, String label) {
+  Widget _heroChip(IconData icon, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      padding:
+          const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(.20),
+        color: Colors.white.withOpacity(.22),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(.28)),
+        border: Border.all(color: Colors.white.withOpacity(.35)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -301,9 +493,47 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
     );
   }
 
-  // ──────────────────────────────────────────────────────────
+  Widget _quickAction({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Material(
+      color: Colors.white.withOpacity(.95),
+      borderRadius: BorderRadius.circular(13),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(13),
+        onTap: onTap,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 16, color: color),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
   //  TAB CATÁLOGO
-  // ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   Widget _tabCatalogo(List<ProductoPublicado> catalogo, _P p,
       bool isDesktop) {
     if (_tienda!.catalogo.isEmpty) {
@@ -313,12 +543,21 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.inventory_2_outlined, size: 60, color: p.textMuted),
-              const SizedBox(height: 14),
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: _C.primary.withOpacity(p.dark ? .14 : .08),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.inventory_2_outlined,
+                    size: 36, color: _C.primary),
+              ),
+              const SizedBox(height: 16),
               Text('Catálogo vacío',
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w900,
                     color: p.textHigh,
                   )),
               const SizedBox(height: 6),
@@ -331,25 +570,35 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
       );
     }
 
+    final cats = <String>{};
+    for (final prod in _tienda!.catalogo) {
+      if (prod.categoria.isNotEmpty) cats.add(prod.categoria);
+    }
+    final catList = cats.toList()..sort();
+
     return ListView(
       padding: EdgeInsets.fromLTRB(
-        isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 40),
+          isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 40),
       children: [
+        // Search
         Container(
-          height: 44,
+          height: 46,
           decoration: BoxDecoration(
             color: p.surface,
             borderRadius: BorderRadius.circular(13),
-            border: Border.all(color: p.border),
+            border: Border.all(color: p.border, width: 1.2),
+            boxShadow: p.shadowSm,
           ),
           child: TextField(
             controller: _searchCtrl,
             onChanged: (v) => setState(() => _q = v),
-            style: TextStyle(fontSize: 13.5, color: p.textHigh),
+            style:
+                TextStyle(fontSize: 13.5, color: p.textHigh),
             decoration: InputDecoration(
               border: InputBorder.none,
               hintText: 'Buscar en esta tienda…',
-              hintStyle: TextStyle(fontSize: 13, color: p.textMuted),
+              hintStyle:
+                  TextStyle(fontSize: 13, color: p.textMuted),
               prefixIcon: Icon(Icons.search_rounded,
                   size: 18, color: p.textMuted),
               suffixIcon: _q.isNotEmpty
@@ -364,21 +613,46 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
             ),
           ),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 12),
+
+        // Chips de categorías
+        if (catList.isNotEmpty)
+          SizedBox(
+            height: 34,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              physics: const BouncingScrollPhysics(),
+              children: [
+                _catChip(p, 'Todo', _catSel == null,
+                    () => setState(() => _catSel = null)),
+                ...catList.map((c) => Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: _catChip(p, c, _catSel == c,
+                          () => setState(() => _catSel = c)),
+                    )),
+              ],
+            ),
+          ),
+        const SizedBox(height: 16),
+
         if (catalogo.isEmpty)
           Padding(
-            padding: const EdgeInsets.all(30),
+            padding: const EdgeInsets.all(40),
             child: Column(
               children: [
                 Icon(Icons.search_off_rounded,
-                    size: 40, color: p.textMuted),
-                const SizedBox(height: 10),
+                    size: 44, color: p.textMuted),
+                const SizedBox(height: 12),
                 Text('Sin coincidencias',
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w800,
                       color: p.textHigh,
                     )),
+                const SizedBox(height: 4),
+                Text('Prueba con otra búsqueda o categoría.',
+                    style: TextStyle(
+                        fontSize: 12.5, color: p.textMuted)),
               ],
             ),
           )
@@ -405,13 +679,54 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
     );
   }
 
+  Widget _catChip(
+      _P p, String label, bool selected, VoidCallback onTap) {
+    return Material(
+      color: selected ? Colors.transparent : p.surface,
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(colors: _C.gradBrand)
+                : null,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+                color: selected ? Colors.transparent : p.border),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: _C.primary.withOpacity(.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected
+                    ? FontWeight.w900
+                    : FontWeight.w600,
+                color: selected ? Colors.white : p.textMid,
+              )),
+        ),
+      ),
+    );
+  }
+
   void _verProducto(ProductoPublicado prod, _P p) {
     showModalBottomSheet(
       context: context,
       backgroundColor: p.surface,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (_) => Padding(
         padding: const EdgeInsets.all(20),
@@ -421,18 +736,19 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           children: [
             Center(
               child: Container(
-                width: 40, height: 4,
+                width: 40,
+                height: 4,
                 decoration: BoxDecoration(
                   color: p.border,
                   borderRadius: BorderRadius.circular(2),
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             if (prod.imagenUrl != null &&
                 prod.imagenUrl!.isNotEmpty)
               ClipRRect(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 child: AspectRatio(
                   aspectRatio: 1.4,
                   child: CachedNetworkImage(
@@ -447,69 +763,151 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                   ),
                 ),
               ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Text(prod.nombre,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 20,
                   fontWeight: FontWeight.w900,
                   color: p.textHigh,
+                  letterSpacing: -0.4,
                 )),
-            const SizedBox(height: 4),
-            Text('\$${prod.precio.toStringAsFixed(2)} / ${prod.unidad}',
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                  color: _C.primary,
-                )),
-            if (prod.descripcion != null &&
-                prod.descripcion!.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(prod.descripcion!,
-                  style: TextStyle(
-                      fontSize: 13, height: 1.4, color: p.textMid)),
-            ],
-            if (prod.unidadesVendidas > 0) ...[
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _C.warning.withOpacity(.14),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                            Icons.local_fire_department_rounded,
-                            size: 14, color: _C.warning),
-                        const SizedBox(width: 5),
-                        Text('${prod.unidadesVendidas} vendidos',
-                            style: const TextStyle(
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w800,
-                              color: _C.warning,
-                            )),
-                      ],
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _C.success.withOpacity(.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.sell_rounded,
+                          size: 12, color: _C.success),
+                      const SizedBox(width: 4),
+                      Text(
+                        prod.disponible ? 'Disponible' : 'Agotado',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: prod.disponible
+                              ? _C.success
+                              : _C.danger,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: _C.primary.withOpacity(.14),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    prod.categoria,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: _C.primary,
                     ),
                   ),
-                ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '\$${prod.precio.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1,
+                    color: _C.primary,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '/ ${prod.unidad}',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: p.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (prod.descripcion != null &&
+                prod.descripcion!.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: p.surface2,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(prod.descripcion!,
+                    style: TextStyle(
+                        fontSize: 13,
+                        height: 1.5,
+                        color: p.textMid)),
               ),
             ],
-            const SizedBox(height: 20),
+            if (prod.unidadesVendidas > 0) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [
+                    _C.warning.withOpacity(.10),
+                    _C.warning.withOpacity(.04),
+                  ]),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: _C.warning.withOpacity(.24)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.local_fire_department_rounded,
+                        size: 18, color: _C.warning),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '¡${prod.unidadesVendidas} unidades vendidas!',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: _C.warning,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 22),
             ElevatedButton.icon(
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.check_rounded, size: 18),
-              label: const Text('Entendido'),
+              label: const Text('Entendido',
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w900)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _C.primary,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(14),
                 ),
               ),
             ),
@@ -519,9 +917,9 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
     );
   }
 
-  // ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   //  TAB RESEÑAS
-  // ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   Widget _tabResenas(_P p) {
     if (_resenas.isEmpty) {
       return Center(
@@ -530,14 +928,27 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(Icons.reviews_outlined, size: 60, color: p.textMuted),
-              const SizedBox(height: 14),
+              Container(
+                width: 80,
+                height: 80,
+                decoration: BoxDecoration(
+                  color: _C.warning.withOpacity(p.dark ? .14 : .08),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.reviews_outlined,
+                    size: 36, color: _C.warning),
+              ),
+              const SizedBox(height: 16),
               Text('Sin reseñas todavía',
                   style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 15.5,
+                    fontWeight: FontWeight.w900,
                     color: p.textHigh,
                   )),
+              const SizedBox(height: 6),
+              Text('Sé el primero en dejar tu opinión.',
+                  style: TextStyle(
+                      fontSize: 12.5, color: p.textMuted)),
             ],
           ),
         ),
@@ -558,24 +969,30 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
 
   Widget _resumenResenas(_P p) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: p.surface,
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(20),
         border: Border.all(color: p.border),
+        boxShadow: p.shadowSm,
       ),
       child: Row(
         children: [
           Column(
             children: [
-              Text(_tienda!.rating.toStringAsFixed(1),
-                  style: TextStyle(
-                    fontSize: 40,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -1.5,
-                    color: p.textHigh,
-                  )),
+              Text(
+                _tienda!.rating.toStringAsFixed(1),
+                style: TextStyle(
+                  fontSize: 46,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -2,
+                  color: p.textHigh,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(height: 6),
               Row(
+                mainAxisSize: MainAxisSize.min,
                 children: List.generate(5, (i) {
                   final filled = i < _tienda!.rating.round();
                   return Icon(
@@ -588,8 +1005,11 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                 }),
               ),
               const SizedBox(height: 4),
-              Text('${_tienda!.totalResenas} reseñas',
-                  style: TextStyle(fontSize: 11, color: p.textMuted)),
+              Text(
+                '${_tienda!.totalResenas} reseñas',
+                style:
+                    TextStyle(fontSize: 11, color: p.textMuted),
+              ),
             ],
           ),
           const SizedBox(width: 20),
@@ -599,34 +1019,48 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
               children: [
                 for (int e = 5; e >= 1; e--)
                   Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 3),
                     child: Row(
                       children: [
-                        Text('$e',
-                            style: TextStyle(
-                                fontSize: 10, color: p.textMuted)),
+                        SizedBox(
+                          width: 14,
+                          child: Text('$e',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: p.textMuted)),
+                        ),
                         const SizedBox(width: 4),
                         const Icon(Icons.star_rounded,
-                            size: 10, color: _C.warning),
-                        const SizedBox(width: 6),
+                            size: 11, color: _C.warning),
+                        const SizedBox(width: 8),
                         Expanded(
                           child: ClipRRect(
                             borderRadius: BorderRadius.circular(4),
                             child: LinearProgressIndicator(
                               value: _proporcion(e),
-                              minHeight: 5,
+                              minHeight: 6,
                               backgroundColor: p.surface2,
-                              valueColor: const AlwaysStoppedAnimation(
-                                  _C.warning),
+                              valueColor:
+                                  const AlwaysStoppedAnimation(
+                                      _C.warning),
                             ),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Text('${(_proporcion(e) * 100).round()}%',
+                        const SizedBox(width: 8),
+                        SizedBox(
+                          width: 34,
+                          child: Text(
+                            '${(_proporcion(e) * 100).round()}%',
+                            textAlign: TextAlign.right,
                             style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 10.5,
                                 fontWeight: FontWeight.w700,
-                                color: p.textMuted)),
+                                color: p.textMuted),
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -652,6 +1086,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
         color: p.surface,
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: p.border),
+        boxShadow: p.shadowSm,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -659,7 +1094,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           Row(
             children: [
               CircleAvatar(
-                radius: 18,
+                radius: 20,
                 backgroundColor: _C.primary.withOpacity(.14),
                 child: Text(
                   r.autorNombre.isNotEmpty
@@ -668,6 +1103,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                   style: const TextStyle(
                     color: _C.primary,
                     fontWeight: FontWeight.w900,
+                    fontSize: 15,
                   ),
                 ),
               ),
@@ -678,11 +1114,11 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                   children: [
                     Text(r.autorNombre,
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 13.5,
                           fontWeight: FontWeight.w800,
                           color: p.textHigh,
                         )),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Row(
                       children: List.generate(5, (i) {
                         final filled = i < r.rating.round();
@@ -690,7 +1126,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                           filled
                               ? Icons.star_rounded
                               : Icons.star_border_rounded,
-                          size: 12,
+                          size: 13,
                           color: _C.warning,
                         );
                       }),
@@ -698,16 +1134,31 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                   ],
                 ),
               ),
-              Text(_fechaCorta(r.fecha),
-                  style:
-                      TextStyle(fontSize: 10.5, color: p.textMuted)),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: p.surface2,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _fechaCorta(r.fecha),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: p.textMuted,
+                  ),
+                ),
+              ),
             ],
           ),
           if (r.comentario != null && r.comentario!.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Text(r.comentario!,
                 style: TextStyle(
-                    fontSize: 12.5, height: 1.4, color: p.textMid)),
+                    fontSize: 13,
+                    height: 1.5,
+                    color: p.textMid)),
           ],
         ],
       ),
@@ -723,25 +1174,42 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
     return '${(diff.inDays / 30).floor()}m';
   }
 
-  // ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   //  TAB INFO
-  // ──────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════
   Widget _tabInfo(TiendaPublica t, _P p, bool isDesktop) {
     return ListView(
       padding: EdgeInsets.fromLTRB(
-        isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 40),
+          isDesktop ? 24 : 14, 16, isDesktop ? 24 : 14, 40),
       children: [
+        if (t.descripcion.isNotEmpty) ...[
+          _infoCard(
+            p,
+            title: 'Sobre la tienda',
+            icon: Icons.info_rounded,
+            color: _C.primary,
+            child: Text(t.descripcion,
+                style: TextStyle(
+                    fontSize: 13, height: 1.55, color: p.textMid)),
+          ),
+          const SizedBox(height: 14),
+        ],
         if (t.tieneUbicacion) ...[
-          _card(p, 'Ubicación', Icons.location_on_rounded, _C.info, () {
-            return Column(
+          _infoCard(
+            p,
+            title: 'Ubicación',
+            icon: Icons.location_on_rounded,
+            color: _C.info,
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (t.direccion != null && t.direccion!.isNotEmpty)
+                if (t.direccion != null &&
+                    t.direccion!.isNotEmpty)
                   Row(
                     children: [
                       Icon(Icons.place_rounded,
                           size: 15, color: p.textMuted),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 8),
                       Expanded(
                         child: Text(t.direccion!,
                             style: TextStyle(
@@ -751,7 +1219,7 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                       ),
                     ],
                   ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 14),
                 Row(
                   children: [
                     Expanded(
@@ -763,13 +1231,15 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                                 MapaTiendasScreen(tiendaEnfocada: t),
                           ),
                         ),
-                        icon: const Icon(Icons.map_rounded, size: 16),
+                        icon: const Icon(Icons.map_rounded,
+                            size: 16),
                         label: const Text('Ver en mapa'),
                         style: OutlinedButton.styleFrom(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 12),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(11),
+                            borderRadius:
+                                BorderRadius.circular(11),
                           ),
                         ),
                       ),
@@ -784,11 +1254,12 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                         style: ElevatedButton.styleFrom(
                           backgroundColor: _C.success,
                           foregroundColor: Colors.white,
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 12),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 12),
                           elevation: 0,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(11),
+                            borderRadius:
+                                BorderRadius.circular(11),
                           ),
                         ),
                       ),
@@ -796,34 +1267,68 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
                   ],
                 ),
               ],
-            );
-          }),
+            ),
+          ),
           const SizedBox(height: 14),
         ],
-        _card(p, 'Contacto', Icons.contact_mail_rounded, _C.cyan, () {
-          return Column(
+        _infoCard(
+          p,
+          title: 'Contacto',
+          icon: Icons.contact_phone_rounded,
+          color: _C.cyan,
+          child: Column(
             children: [
-              if (t.telefono != null && t.telefono!.isNotEmpty)
-                _infoRow(p, Icons.phone_rounded, 'Teléfono', t.telefono!,
-                    onTap: () => _llamar(t.telefono!)),
-              if (t.whatsapp != null && t.whatsapp!.isNotEmpty)
-                _infoRow(p, Icons.chat_rounded, 'WhatsApp', t.whatsapp!,
-                    onTap: () => _whatsapp(t.whatsapp!)),
+              if (t.telefono != null &&
+                  t.telefono!.isNotEmpty)
+                _infoRow(
+                  p,
+                  icon: Icons.phone_rounded,
+                  label: 'Teléfono',
+                  value: t.telefono!,
+                  color: _C.info,
+                  onTap: () => _llamar(t.telefono!),
+                ),
+              if (t.whatsapp != null &&
+                  t.whatsapp!.isNotEmpty)
+                _infoRow(
+                  p,
+                  icon: Icons.chat_rounded,
+                  label: 'WhatsApp',
+                  value: t.whatsapp!,
+                  color: _C.success,
+                  onTap: () => _whatsapp(t.whatsapp!),
+                ),
               if (t.email != null && t.email!.isNotEmpty)
-                _infoRow(p, Icons.email_rounded, 'Email', t.email!,
-                    onTap: () => _email(t.email!)),
+                _infoRow(
+                  p,
+                  icon: Icons.email_rounded,
+                  label: 'Email',
+                  value: t.email!,
+                  color: _C.warning,
+                  onTap: () => _email(t.email!),
+                ),
               if (t.horario != null && t.horario!.isNotEmpty)
-                _infoRow(p, Icons.schedule_rounded, 'Horario',
-                    t.horario!),
+                _infoRow(
+                  p,
+                  icon: Icons.schedule_rounded,
+                  label: 'Horario',
+                  value: t.horario!,
+                  color: _C.purple,
+                ),
             ],
-          );
-        }),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _card(_P p, String title, IconData icon, Color color,
-      Widget Function() buildChild) {
+  Widget _infoCard(
+    _P p, {
+    required String title,
+    required IconData icon,
+    required Color color,
+    required Widget child,
+  }) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -838,21 +1343,28 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           Row(
             children: [
               Container(
-                width: 34, height: 34,
+                width: 34,
+                height: 34,
                 decoration: BoxDecoration(
                   gradient: LinearGradient(colors: [
-                    color.withOpacity(.22),
-                    color.withOpacity(.06),
+                    color,
+                    color.withOpacity(.72),
                   ]),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: color.withOpacity(.24)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withOpacity(.30),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: Icon(icon, color: color, size: 16),
+                child: Icon(icon, color: Colors.white, size: 16),
               ),
               const SizedBox(width: 10),
               Text(title,
                   style: TextStyle(
-                    fontSize: 14.5,
+                    fontSize: 15,
                     fontWeight: FontWeight.w900,
                     color: p.textHigh,
                     letterSpacing: -0.2,
@@ -860,14 +1372,20 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
             ],
           ),
           const SizedBox(height: 14),
-          buildChild(),
+          child,
         ],
       ),
     );
   }
 
-  Widget _infoRow(_P p, IconData icon, String label, String value,
-      {VoidCallback? onTap}) {
+  Widget _infoRow(
+    _P p, {
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    VoidCallback? onTap,
+  }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
@@ -877,11 +1395,18 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: Padding(
-            padding:
-                const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+            padding: const EdgeInsets.symmetric(
+                vertical: 6, horizontal: 4),
             child: Row(
               children: [
-                Icon(icon, size: 16, color: p.textMuted),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(p.dark ? .18 : .10),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 14, color: color),
+                ),
                 const SizedBox(width: 10),
                 Text('$label: ',
                     style: TextStyle(
@@ -941,7 +1466,8 @@ class _TiendaDetalleScreenState extends State<TiendaDetalleScreen>
 class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   final TabBar tabBar;
   final Color bg;
-  _TabBarDelegate(this.tabBar, this.bg);
+  final Color border;
+  _TabBarDelegate(this.tabBar, this.bg, this.border);
 
   @override
   double get minExtent => tabBar.preferredSize.height + 4;
@@ -951,11 +1477,19 @@ class _TabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   Widget build(
           BuildContext context, double s, bool overlaps) =>
-      Container(color: bg, child: tabBar);
+      Container(
+        color: bg,
+        child: Column(
+          children: [
+            Expanded(child: tabBar),
+            Container(height: 1, color: border),
+          ],
+        ),
+      );
 
   @override
   bool shouldRebuild(covariant _TabBarDelegate old) =>
-      tabBar != old.tabBar || bg != old.bg;
+      tabBar != old.tabBar || bg != old.bg || border != old.border;
 }
 
 class _C {
@@ -965,7 +1499,8 @@ class _C {
   static const warning = Color(0xFFF59E0B);
   static const danger = Color(0xFFEF4444);
   static const info = Color(0xFF3B82F6);
-  static const gold = Color(0xFFCA8A04);
+  static const gold = Color(0xFFEAB308);
+  static const purple = Color(0xFF8B5CF6);
   static const gradBrand = [Color(0xFF1A5CFF), Color(0xFF06B6D4)];
 }
 
@@ -980,12 +1515,14 @@ class _P {
   Color get textMuted => dark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
   Color get border => dark ? const Color(0x291A5CFF) : const Color(0x141A5CFF);
   List<BoxShadow> get shadowSm => [
-    BoxShadow(
-      color: dark ? Colors.black.withOpacity(.30)
-          : const Color(0xFF0A1A33).withOpacity(.05),
-      blurRadius: 16, offset: const Offset(0, 4),
-    ),
-  ];
+        BoxShadow(
+          color: dark
+              ? Colors.black.withOpacity(.30)
+              : const Color(0xFF0A1A33).withOpacity(.05),
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+        ),
+      ];
 }
 
 class _ProductCard extends StatelessWidget {
@@ -1004,14 +1541,14 @@ class _ProductCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
           decoration: BoxDecoration(
             color: p.surface,
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: destacado
                   ? _C.primary.withOpacity(.55)
@@ -1029,8 +1566,8 @@ class _ProductCard extends StatelessWidget {
                   children: [
                     ClipRRect(
                       borderRadius: const BorderRadius.only(
-                        topLeft: Radius.circular(13),
-                        topRight: Radius.circular(13),
+                        topLeft: Radius.circular(15),
+                        topRight: Radius.circular(15),
                       ),
                       child: Container(
                         color: p.surface2,
@@ -1049,21 +1586,70 @@ class _ProductCard extends StatelessWidget {
                     ),
                     if (producto.destacado)
                       Positioned(
-                        top: 6, left: 6,
+                        top: 8,
+                        left: 8,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 6, vertical: 2),
+                              horizontal: 7, vertical: 3),
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
                                 colors: _C.gradBrand),
-                            borderRadius: BorderRadius.circular(5),
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _C.primary.withOpacity(.4),
+                                blurRadius: 8,
+                                offset: const Offset(0, 3),
+                              ),
+                            ],
                           ),
-                          child: const Text('★ TOP',
-                              style: TextStyle(
-                                fontSize: 8.5,
-                                fontWeight: FontWeight.w900,
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.star_rounded,
+                                  size: 9, color: Colors.white),
+                              SizedBox(width: 3),
+                              Text('TOP',
+                                  style: TextStyle(
+                                    fontSize: 8.5,
+                                    fontWeight: FontWeight.w900,
+                                    color: Colors.white,
+                                    letterSpacing: 0.4,
+                                  )),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (!producto.disponible)
+                      Positioned.fill(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(.55),
+                            borderRadius: const BorderRadius.only(
+                              topLeft: Radius.circular(15),
+                              topRight: Radius.circular(15),
+                            ),
+                          ),
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 10, vertical: 5),
+                              decoration: BoxDecoration(
                                 color: Colors.white,
-                              )),
+                                borderRadius:
+                                    BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'AGOTADO',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: _C.danger,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
                       ),
                   ],
@@ -1072,18 +1658,20 @@ class _ProductCard extends StatelessWidget {
               Expanded(
                 flex: 42,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 8),
+                  padding:
+                      const EdgeInsets.fromLTRB(8, 6, 8, 8),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Text(producto.nombre,
                             maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w800,
-                              height: 1.15,
+                              height: 1.2,
                               color: p.textHigh,
                             )),
                       ),
@@ -1093,7 +1681,8 @@ class _ProductCard extends StatelessWidget {
                               fontSize: 9.5, color: p.textMuted)),
                       const SizedBox(height: 3),
                       Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
+                        crossAxisAlignment:
+                            CrossAxisAlignment.end,
                         children: [
                           Flexible(
                             child: Text(
@@ -1109,7 +1698,8 @@ class _ProductCard extends StatelessWidget {
                           ),
                           const SizedBox(width: 3),
                           Padding(
-                            padding: const EdgeInsets.only(bottom: 2),
+                            padding:
+                                const EdgeInsets.only(bottom: 2),
                             child: Text('/${producto.unidad}',
                                 style: TextStyle(
                                     fontSize: 9,

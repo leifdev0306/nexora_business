@@ -1,9 +1,7 @@
 // ============================================================
 //  productos_publicados_screen.dart  ·  NEXORA BUSINESS
-//  Gestión de productos visibles en la tienda pública
-//  Claves namespaced por empresa
+//  Gestión premium de productos publicados
 // ============================================================
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../main.dart';
@@ -14,9 +12,6 @@ import 'mi_tienda_screen.dart'
     show keyTiendaDeEmpresa, kNetworkStoresKey;
 import 'servicio_cancelado_screen.dart';
 
-// ════════════════════════════════════════════════════════════
-//  PALETA
-// ════════════════════════════════════════════════════════════
 class _C {
   static const primary   = Color(0xFF1A5CFF);
   static const cyan      = Color(0xFF06B6D4);
@@ -27,7 +22,7 @@ class _C {
   static const purple    = Color(0xFF8B5CF6);
   static const pink      = Color(0xFFEC4899);
   static const indigo    = Color(0xFF6366F1);
-
+  static const gold      = Color(0xFFEAB308);
   static const gradBrand = [Color(0xFF1A5CFF), Color(0xFF06B6D4)];
 }
 
@@ -42,12 +37,14 @@ class _P {
   Color get textMuted   => dark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
   Color get border      => dark ? const Color(0x291A5CFF) : const Color(0x141A5CFF);
   List<BoxShadow> get shadowSm => [
-    BoxShadow(
-      color: dark ? Colors.black.withOpacity(.30)
-          : const Color(0xFF0A1A33).withOpacity(.05),
-      blurRadius: 16, offset: const Offset(0, 4),
-    ),
-  ];
+        BoxShadow(
+          color: dark
+              ? Colors.black.withOpacity(.30)
+              : const Color(0xFF0A1A33).withOpacity(.05),
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+        ),
+      ];
 }
 
 class ProductosPublicadosScreen extends StatefulWidget {
@@ -87,9 +84,11 @@ class _ProductosPublicadosScreenState
     }
 
     TiendaPublica? t;
-    final raw = provider.catalogosBox.get(keyTiendaDeEmpresa(empresaId));
+    final raw =
+        provider.catalogosBox.get(keyTiendaDeEmpresa(empresaId));
     if (raw is Map) {
-      final temp = TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
+      final temp =
+          TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
       if (temp.empresaId == empresaId) t = temp;
     }
 
@@ -100,20 +99,15 @@ class _ProductosPublicadosScreenState
     });
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  DESPUBLICAR — reconstruye catálogo y sincroniza red
-  // ══════════════════════════════════════════════════════════
   Future<void> _despublicar(String productoId) async {
     if (_tienda == null) return;
     final provider = Provider.of<AppProvider>(context, listen: false);
     final empresaId = provider.empresaId ?? '';
     if (empresaId.isEmpty) return;
 
-    // 1) Quitar de productosPublicados
     final lista = List<String>.from(_tienda!.productosPublicados)
       ..remove(productoId);
 
-    // 2) Reconstruir catálogo sin ese producto
     final catalogoActualizado = _tienda!.catalogo
         .where((p) => p.id != productoId)
         .toList();
@@ -124,16 +118,15 @@ class _ProductosPublicadosScreenState
       updatedAt: DateTime.now(),
     );
 
-    // 3) Local namespaced
     await provider.catalogosBox.put(
         keyTiendaDeEmpresa(empresaId), nueva.toJson());
 
-    // 4) Upsert en Red local
     final netRaw =
         (provider.catalogosBox.get(kNetworkStoresKey) as List?) ?? [];
     final netList =
         netRaw.map((e) => Map<String, dynamic>.from(e)).toList();
-    final idx = netList.indexWhere((e) => e['empresaId'] == empresaId);
+    final idx =
+        netList.indexWhere((e) => e['empresaId'] == empresaId);
     if (idx >= 0) {
       netList[idx] = nueva.toJson();
     } else {
@@ -141,7 +134,6 @@ class _ProductosPublicadosScreenState
     }
     await provider.catalogosBox.put(kNetworkStoresKey, netList);
 
-    // 5) Supabase (para que otros dispositivos lo vean)
     if (provider.isOnline) {
       try {
         await provider.publicarTiendaEnRed(
@@ -159,14 +151,13 @@ class _ProductosPublicadosScreenState
           catalogo: nueva.catalogo.map((p) => p.toJson()).toList(),
           activa: nueva.activa,
         );
-      } catch (e) {
-        print('⚠️ Error sincronizando despublicación: $e');
-      }
+      } catch (_) {}
     }
 
     if (!mounted) return;
     setState(() => _tienda = nueva);
-    mostrarSnackBar(mensaje: 'Producto despublicado', esExito: true);
+    mostrarSnackBar(
+        mensaje: 'Producto despublicado', esExito: true);
   }
 
   @override
@@ -198,21 +189,22 @@ class _ProductosPublicadosScreenState
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
-                  width: 80, height: 80,
+                  width: 84,
+                  height: 84,
                   decoration: BoxDecoration(
                     gradient: LinearGradient(colors: [
-                      _C.primary.withOpacity(.16),
+                      _C.primary.withOpacity(.20),
                       _C.cyan.withOpacity(.06),
                     ]),
                     shape: BoxShape.circle,
                   ),
                   child: const Icon(Icons.storefront_rounded,
-                      size: 38, color: _C.primary),
+                      size: 42, color: _C.primary),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 Text('Primero configura tu tienda',
                     style: TextStyle(
-                      fontSize: 15,
+                      fontSize: 15.5,
                       fontWeight: FontWeight.w900,
                       color: p.textHigh,
                     )),
@@ -227,9 +219,9 @@ class _ProductosPublicadosScreenState
                     backgroundColor: _C.primary,
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(
-                        horizontal: 18, vertical: 12),
+                        horizontal: 20, vertical: 12),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(11),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     elevation: 0,
                   ),
@@ -241,7 +233,6 @@ class _ProductosPublicadosScreenState
       );
     }
 
-    // Productos publicados actuales (activos y con inventario en la empresa)
     final publicados = provider.productos
         .where((prod) =>
             _tienda!.productosPublicados.contains(prod.id))
@@ -255,51 +246,49 @@ class _ProductosPublicadosScreenState
     }).toList();
 
     if (_filtro == 'Con stock') {
-      filtrados = filtrados.where((prod) => prod.stock > 0).toList();
+      filtrados =
+          filtrados.where((prod) => prod.stock > 0).toList();
     } else if (_filtro == 'Sin stock') {
-      filtrados = filtrados.where((prod) => prod.stock <= 0).toList();
+      filtrados =
+          filtrados.where((prod) => prod.stock <= 0).toList();
     }
 
-    final sinStock = publicados.where((prod) => prod.stock <= 0).length;
+    final sinStock =
+        publicados.where((prod) => prod.stock <= 0).length;
     final conStock = publicados.length - sinStock;
 
     return Scaffold(
       backgroundColor: p.bg,
       appBar: _appBar(p),
-      body: Stack(
-        children: [
-          _background(p),
-          RefreshIndicator(
-            onRefresh: _cargar,
-            child: SingleChildScrollView(
-              physics: const AlwaysScrollableScrollPhysics(
-                  parent: BouncingScrollPhysics()),
-              padding: EdgeInsets.fromLTRB(
-                isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 100),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 1100),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _kpiStrip(publicados.length, conStock, sinStock, p),
-                      const SizedBox(height: 16),
-                      _searchBar(p),
-                      const SizedBox(height: 12),
-                      _filtros(p),
-                      const SizedBox(height: 16),
-                      if (filtrados.isEmpty)
-                        _emptyState(p)
-                      else
-                        _grid(filtrados, provider, p),
-                      const SizedBox(height: 20),
-                    ],
-                  ),
-                ),
+      body: RefreshIndicator(
+        onRefresh: _cargar,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(
+              parent: BouncingScrollPhysics()),
+          padding: EdgeInsets.fromLTRB(
+              isDesktop ? 20 : 14, 14, isDesktop ? 20 : 14, 100),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1100),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _kpiStrip(publicados.length, conStock, sinStock, p),
+                  const SizedBox(height: 16),
+                  _searchBar(p),
+                  const SizedBox(height: 12),
+                  _filtros(p),
+                  const SizedBox(height: 16),
+                  if (filtrados.isEmpty)
+                    _emptyState(p)
+                  else
+                    _grid(filtrados, provider, p),
+                  const SizedBox(height: 20),
+                ],
               ),
             ),
           ),
-        ],
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'publicados_fab',
@@ -309,7 +298,8 @@ class _ProductosPublicadosScreenState
         backgroundColor: _C.primary,
         foregroundColor: Colors.white,
         elevation: 6,
-        icon: const Icon(Icons.add_photo_alternate_rounded, size: 20),
+        icon:
+            const Icon(Icons.add_photo_alternate_rounded, size: 20),
         label: const Text(
           'Publicar más',
           style: TextStyle(
@@ -325,25 +315,6 @@ class _ProductosPublicadosScreenState
     );
   }
 
-  Widget _background(_P p) {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Stack(
-          children: [
-            Positioned(
-              top: -180, right: -160,
-              child: _orb(420, _C.primary.withOpacity(p.dark ? .12 : .07)),
-            ),
-            Positioned(
-              bottom: -220, left: -140,
-              child: _orb(440, _C.cyan.withOpacity(p.dark ? .10 : .06)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   PreferredSizeWidget _appBar(_P p) {
     return AppBar(
       backgroundColor: p.surface,
@@ -354,7 +325,8 @@ class _ProductosPublicadosScreenState
       title: Row(
         children: [
           Container(
-            width: 36, height: 36,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: _C.gradBrand),
               borderRadius: BorderRadius.circular(11),
@@ -376,11 +348,11 @@ class _ProductosPublicadosScreenState
             children: [
               const Text('Publicados',
                   style: TextStyle(
-                    fontSize: 17,
+                    fontSize: 16.5,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.3,
                   )),
-              Text('Productos en tu tienda',
+              Text('Productos visibles en tu tienda',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
@@ -393,58 +365,187 @@ class _ProductosPublicadosScreenState
     );
   }
 
-  Widget _kpiStrip(int total, int conStock, int sinStock, _P p) {
-    return Row(
-      children: [
-        Expanded(
-          child: _kpiTile(p,
-              label: 'Total', value: '$total',
-              color: _C.primary, icon: Icons.inventory_rounded),
+  Widget _kpiStrip(
+      int total, int conStock, int sinStock, _P p) {
+    final pct = total == 0 ? 0.0 : conStock / total;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            _C.primary.withOpacity(p.dark ? .22 : .10),
+            _C.cyan.withOpacity(p.dark ? .10 : .05),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _kpiTile(p,
-              label: 'Con stock', value: '$conStock',
-              color: _C.success, icon: Icons.check_circle_rounded),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: _kpiTile(p,
-              label: 'Sin stock', value: '$sinStock',
-              color: _C.danger, icon: Icons.block_rounded),
-        ),
-      ],
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: _C.primary.withOpacity(p.dark ? .35 : .20)),
+        boxShadow: [
+          BoxShadow(
+            color: _C.primary.withOpacity(.14),
+            blurRadius: 24,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(colors: _C.gradBrand),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _C.primary.withOpacity(.42),
+                      blurRadius: 14,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: const Icon(Icons.insights_rounded,
+                    color: Colors.white, size: 20),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Resumen de tu catálogo',
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: -0.2,
+                        color: p.textHigh,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '$total productos publicados',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: p.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _kpiTile(
+                  p,
+                  label: 'Total',
+                  value: '$total',
+                  color: _C.primary,
+                  icon: Icons.inventory_rounded,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _kpiTile(
+                  p,
+                  label: 'Con stock',
+                  value: '$conStock',
+                  color: _C.success,
+                  icon: Icons.check_circle_rounded,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _kpiTile(
+                  p,
+                  label: 'Sin stock',
+                  value: '$sinStock',
+                  color: _C.danger,
+                  icon: Icons.block_rounded,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: LinearProgressIndicator(
+              value: pct,
+              minHeight: 8,
+              backgroundColor: p.dark
+                  ? Colors.white.withOpacity(.08)
+                  : Colors.white.withOpacity(.55),
+              valueColor: const AlwaysStoppedAnimation(_C.success),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Text(
+                '${(pct * 100).toStringAsFixed(0)}% disponibles',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: p.textMuted,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '$sinStock agotado${sinStock == 1 ? '' : 's'}',
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: _C.danger,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _kpiTile(_P p,
-      {required String label,
-      required String value,
-      required Color color,
-      required IconData icon}) {
+  Widget _kpiTile(
+    _P p, {
+    required String label,
+    required String value,
+    required Color color,
+    required IconData icon,
+  }) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.all(11),
       decoration: BoxDecoration(
-        color: p.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: p.border),
-        boxShadow: p.shadowSm,
+        color: p.dark
+            ? Colors.white.withOpacity(.06)
+            : Colors.white.withOpacity(.72),
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(
+          color: p.dark
+              ? Colors.white.withOpacity(.10)
+              : Colors.white.withOpacity(.55),
+        ),
       ),
       child: Row(
         children: [
           Container(
-            width: 34, height: 34,
+            width: 30,
+            height: 30,
             decoration: BoxDecoration(
-              gradient: LinearGradient(colors: [
-                color.withOpacity(.22),
-                color.withOpacity(.06),
-              ]),
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: color.withOpacity(.24)),
+              color: color.withOpacity(.14),
+              borderRadius: BorderRadius.circular(9),
             ),
-            child: Icon(icon, color: color, size: 16),
+            child: Icon(icon, color: color, size: 15),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 8),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -452,14 +553,16 @@ class _ProductosPublicadosScreenState
               children: [
                 Text(value,
                     style: TextStyle(
-                      fontSize: 17,
+                      fontSize: 16,
                       fontWeight: FontWeight.w900,
                       letterSpacing: -0.5,
                       color: p.textHigh,
+                      height: 1,
                     )),
+                const SizedBox(height: 2),
                 Text(label,
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 9.5,
                       fontWeight: FontWeight.w600,
                       color: p.textMuted,
                     )),
@@ -477,21 +580,21 @@ class _ProductosPublicadosScreenState
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: TextField(
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _busqueda = v),
         style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: p.textHigh,
-        ),
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: p.textHigh),
         decoration: InputDecoration(
           border: InputBorder.none,
           hintText: 'Buscar producto publicado…',
-          hintStyle: TextStyle(fontSize: 13.5, color: p.textMuted),
+          hintStyle:
+              TextStyle(fontSize: 13.5, color: p.textMuted),
           prefixIcon: Icon(Icons.search_rounded,
               size: 20, color: p.textMuted),
           suffixIcon: _busqueda.isNotEmpty
@@ -510,7 +613,11 @@ class _ProductosPublicadosScreenState
   }
 
   Widget _filtros(_P p) {
-    final opciones = ['Todos', 'Con stock', 'Sin stock'];
+    final opciones = <(String, IconData)>[
+      ('Todos', Icons.apps_rounded),
+      ('Con stock', Icons.check_circle_rounded),
+      ('Sin stock', Icons.block_rounded),
+    ];
     return SizedBox(
       height: 36,
       child: ListView.separated(
@@ -518,35 +625,61 @@ class _ProductosPublicadosScreenState
         itemCount: opciones.length,
         separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (_, i) {
-          final op = opciones[i];
-          final selected = _filtro == op;
+          final (label, icon) = opciones[i];
+          final selected = _filtro == label;
           return Material(
             color: selected ? Colors.transparent : p.surface,
             borderRadius: BorderRadius.circular(11),
             child: InkWell(
               borderRadius: BorderRadius.circular(11),
-              onTap: () => setState(() => _filtro = op),
+              onTap: () =>
+                  setState(() => _filtro = label),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(horizontal: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12),
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
                   gradient: selected
-                      ? const LinearGradient(colors: _C.gradBrand)
+                      ? const LinearGradient(
+                          colors: _C.gradBrand)
                       : null,
                   borderRadius: BorderRadius.circular(11),
                   border: Border.all(
-                    color: selected ? Colors.transparent : p.border,
+                    color:
+                        selected ? Colors.transparent : p.border,
                   ),
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: _C.primary.withOpacity(.28),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ]
+                      : null,
                 ),
-                child: Text(op,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: selected
-                          ? FontWeight.w900
-                          : FontWeight.w600,
-                      color: selected ? Colors.white : p.textMid,
-                    )),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(icon,
+                        size: 13,
+                        color: selected
+                            ? Colors.white
+                            : p.textMuted),
+                    const SizedBox(width: 5),
+                    Text(label,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: selected
+                              ? FontWeight.w900
+                              : FontWeight.w600,
+                          color: selected
+                              ? Colors.white
+                              : p.textMid,
+                        )),
+                  ],
+                ),
               ),
             ),
           );
@@ -555,15 +688,17 @@ class _ProductosPublicadosScreenState
     );
   }
 
-  Widget _grid(List<Producto> productos, AppProvider provider, _P p) {
+  Widget _grid(
+      List<Producto> productos, AppProvider provider, _P p) {
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: 260,
+      gridDelegate:
+          const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 240,
         crossAxisSpacing: 14,
         mainAxisSpacing: 14,
-        childAspectRatio: 0.82,
+        childAspectRatio: 0.8,
       ),
       itemCount: productos.length,
       itemBuilder: (_, i) => _productoCard(productos[i], p),
@@ -575,9 +710,11 @@ class _ProductosPublicadosScreenState
     return Container(
       decoration: BoxDecoration(
         color: p.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: sinStock ? _C.danger.withOpacity(.35) : p.border,
+          color: sinStock
+              ? _C.danger.withOpacity(.35)
+              : p.border,
         ),
         boxShadow: p.shadowSm,
       ),
@@ -590,8 +727,8 @@ class _ProductosPublicadosScreenState
               children: [
                 ClipRRect(
                   borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(15),
-                    topRight: Radius.circular(15),
+                    topLeft: Radius.circular(17),
+                    topRight: Radius.circular(17),
                   ),
                   child: Container(
                     color: p.surface2,
@@ -611,7 +748,8 @@ class _ProductosPublicadosScreenState
                   ),
                 ),
                 Positioned(
-                  top: 8, left: 8,
+                  top: 8,
+                  left: 8,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 8, vertical: 4),
@@ -624,8 +762,10 @@ class _ProductosPublicadosScreenState
                       borderRadius: BorderRadius.circular(8),
                       boxShadow: [
                         BoxShadow(
-                          color: (sinStock ? _C.danger : _C.primary)
-                              .withOpacity(.32),
+                          color: (sinStock
+                                  ? _C.danger
+                                  : _C.primary)
+                              .withOpacity(.35),
                           blurRadius: 8,
                           offset: const Offset(0, 3),
                         ),
@@ -643,7 +783,7 @@ class _ProductosPublicadosScreenState
                         ),
                         const SizedBox(width: 4),
                         Text(
-                          sinStock ? 'SIN STOCK' : 'PUBLICADO',
+                          sinStock ? 'SIN STOCK' : 'ACTIVO',
                           style: const TextStyle(
                             color: Colors.white,
                             fontSize: 8.5,
@@ -656,7 +796,8 @@ class _ProductosPublicadosScreenState
                   ),
                 ),
                 Positioned(
-                  top: 8, right: 8,
+                  top: 8,
+                  right: 8,
                   child: Material(
                     color: Colors.black.withOpacity(.55),
                     shape: const CircleBorder(),
@@ -677,7 +818,8 @@ class _ProductosPublicadosScreenState
           Expanded(
             flex: 45,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+              padding:
+                  const EdgeInsets.fromLTRB(10, 8, 10, 8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -710,7 +852,9 @@ class _ProductosPublicadosScreenState
                         padding: const EdgeInsets.symmetric(
                             horizontal: 6, vertical: 2),
                         decoration: BoxDecoration(
-                          color: (sinStock ? _C.danger : _C.success)
+                          color: (sinStock
+                                  ? _C.danger
+                                  : _C.success)
                               .withOpacity(.12),
                           borderRadius: BorderRadius.circular(6),
                         ),
@@ -719,7 +863,9 @@ class _ProductosPublicadosScreenState
                           style: TextStyle(
                             fontSize: 9.5,
                             fontWeight: FontWeight.w800,
-                            color: sinStock ? _C.danger : _C.success,
+                            color: sinStock
+                                ? _C.danger
+                                : _C.success,
                           ),
                         ),
                       ),
@@ -735,21 +881,57 @@ class _ProductosPublicadosScreenState
   }
 
   Future<void> _confirmarDespublicar(Producto prod) async {
+    final p = _P(Theme.of(context).brightness == Brightness.dark);
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Despublicar producto'),
+        backgroundColor: p.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: _C.danger.withOpacity(.14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.visibility_off_rounded,
+                  color: _C.danger, size: 19),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Despublicar producto',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: p.textHigh,
+                  )),
+            ),
+          ],
+        ),
         content: Text(
-            '¿Quieres quitar "${prod.nombre}" de tu tienda pública?'),
+          '¿Quieres quitar "${prod.nombre}" de tu tienda pública?',
+          style: TextStyle(fontSize: 13, color: p.textMid),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
+            child: Text('Cancelar',
+                style: TextStyle(color: p.textMid)),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: TextButton.styleFrom(foregroundColor: _C.danger),
-            child: const Text('Despublicar'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _C.danger,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11)),
+            ),
+            child: const Text('Despublicar',
+                style: TextStyle(fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -761,31 +943,32 @@ class _ProductosPublicadosScreenState
 
   Widget _emptyState(_P p) {
     return Container(
-      padding: const EdgeInsets.all(32),
+      padding: const EdgeInsets.all(36),
       decoration: BoxDecoration(
         color: p.surface,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(22),
         border: Border.all(color: p.border),
         boxShadow: p.shadowSm,
       ),
       child: Column(
         children: [
           Container(
-            width: 80, height: 80,
+            width: 84,
+            height: 84,
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
-                _C.primary.withOpacity(.16),
+                _C.primary.withOpacity(.20),
                 _C.cyan.withOpacity(.06),
               ]),
               shape: BoxShape.circle,
             ),
             child: const Icon(Icons.inventory_rounded,
-                size: 38, color: _C.primary),
+                size: 42, color: _C.primary),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           Text('Sin productos publicados',
               style: TextStyle(
-                fontSize: 15,
+                fontSize: 15.5,
                 fontWeight: FontWeight.w900,
                 color: p.textHigh,
               )),
@@ -803,17 +986,5 @@ class _ProductosPublicadosScreenState
   String _fmt(double n) {
     if (n == n.roundToDouble()) return n.toInt().toString();
     return n.toStringAsFixed(1);
-  }
-
-  Widget _orb(double size, Color color) {
-    return Container(
-      width: size, height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [color, color.withOpacity(0)],
-        ),
-      ),
-    );
   }
 }

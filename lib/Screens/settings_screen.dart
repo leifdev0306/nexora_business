@@ -1,16 +1,14 @@
 // ============================================================
 //  settings_screen.dart  ·  NEXORA BUSINESS
 //  Configuración premium con panel de sincronización
-//  · Paquete de impresión: flutter_pos_printer_platform_monster
-//  · ✅ Vendedores solo ven: Modo de ventas, Impresora,
-//       Sincronización y Apariencia
-//  · ✅ Dueño/Gerente ven todo (incluye % e impuestos)
+//  · ✅ Errores traducidos a mensajes amigables
 // ============================================================
 
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show File;
+import 'dart:io' show File, FileSystemException;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_pos_printer_platform_monster/flutter_pos_printer_platform.dart';
@@ -64,6 +62,153 @@ class _P {
       ];
 }
 
+// ============================================================
+//  ✅ TRADUCCIÓN CENTRAL DE ERRORES
+//  Convierte cualquier excepción en un mensaje claro y breve
+//  para el usuario. Los detalles técnicos se registran con
+//  debugPrint únicamente.
+// ============================================================
+String _humanError(Object? e) {
+  if (e == null) {
+    return 'Ocurrió un error inesperado. Intenta de nuevo.';
+  }
+
+  debugPrint('🔴 [Settings] Error: $e');
+
+  final raw = e.toString();
+  final low = raw.toLowerCase();
+
+  // ── 1) Impresora / USB / Bluetooth
+  if (e is PlatformException) {
+    final code = (e.code).toLowerCase();
+    final msg = (e.message ?? '').toLowerCase();
+    final combined = '$code $msg';
+
+    if (combined.contains('permission') ||
+        combined.contains('denied') ||
+        combined.contains('unauthorized')) {
+      return 'La app necesita permiso para usar la impresora. Acepta el permiso del sistema.';
+    }
+    if (combined.contains('not found') ||
+        combined.contains('no device') ||
+        combined.contains('unavailable')) {
+      return 'No encontramos la impresora. Verifica el cable USB.';
+    }
+    if (combined.contains('timeout') || combined.contains('no response')) {
+      return 'La impresora no respondió. Verifica que esté encendida.';
+    }
+    if (combined.contains('busy')) {
+      return 'La impresora está ocupada. Espera un momento.';
+    }
+    if (combined.contains('usb') || combined.contains('bluetooth')) {
+      return 'Hubo un problema con la impresora. Revisa la conexión.';
+    }
+    return 'No se pudo comunicar con la impresora.';
+  }
+
+  if (low.contains('usb') ||
+      low.contains('printer') ||
+      low.contains('bluetooth') ||
+      low.contains('thermal')) {
+    if (low.contains('timeout') || low.contains('no response')) {
+      return 'La impresora no respondió. Verifica que esté encendida.';
+    }
+    if (low.contains('busy')) {
+      return 'La impresora está ocupada. Espera un momento.';
+    }
+    if (low.contains('permission')) {
+      return 'La app necesita permiso para usar la impresora.';
+    }
+    if (low.contains('write') || low.contains('send failed')) {
+      return 'No se pudo enviar a la impresora. Revisa la conexión.';
+    }
+    return 'Hubo un problema con la impresora. Verifica el cable USB.';
+  }
+
+  // ── 2) Archivos
+  if (e is FileSystemException) {
+    if (low.contains('permission') || low.contains('access denied')) {
+      return 'Sin permiso para acceder al archivo.';
+    }
+    if (low.contains('no such file') || low.contains('not found')) {
+      return 'El archivo no existe o fue movido.';
+    }
+    if (low.contains('no space') || low.contains('disk full')) {
+      return 'No hay espacio disponible en el dispositivo.';
+    }
+    return 'No pudimos acceder al archivo. Intenta de nuevo.';
+  }
+
+  // ── 3) Red
+  if (low.contains('socketexception') ||
+      low.contains('failed host lookup') ||
+      low.contains('network is unreachable') ||
+      low.contains('no address associated')) {
+    return 'Sin conexión a internet. Revisa tu red e intenta de nuevo.';
+  }
+  if (low.contains('timeout') || low.contains('timed out')) {
+    return 'El servidor tardó demasiado. Intenta de nuevo en un momento.';
+  }
+  if (low.contains('connection refused') ||
+      low.contains('connection reset') ||
+      low.contains('connection closed') ||
+      low.contains('clientexception') ||
+      low.contains('connection terminated')) {
+    return 'La conexión se interrumpió. Intenta de nuevo.';
+  }
+
+  // ── 4) Share / Clipboard
+  if (low.contains('share') || low.contains('clipboard')) {
+    return 'No pudimos compartir la información. Intenta de nuevo.';
+  }
+
+  // ── 5) Reglas de negocio
+  if (low.contains('sin conexión') || low.contains('no hay conexión')) {
+    return 'Sin conexión a internet. Revisa tu red.';
+  }
+  if (low.contains('no hay pendientes') ||
+      low.contains('no pending')) {
+    return 'No hay operaciones pendientes por procesar.';
+  }
+  if (low.contains('usuario no autenticado') ||
+      low.contains('no autenticado') ||
+      low.contains('not authenticated')) {
+    return 'Inicia sesión para continuar.';
+  }
+  if (low.contains('no hay empresa') || low.contains('sin empresa')) {
+    return 'No hay una empresa asociada a tu cuenta.';
+  }
+  if (low.contains('permission') || low.contains('no autorizado')) {
+    return 'No tienes permisos para esta acción.';
+  }
+
+  // ── 6) Fallback: si el mensaje es corto y legible, se muestra
+  final cleaned = raw.replaceFirst('Exception: ', '').trim();
+  if (cleaned.isNotEmpty &&
+      cleaned.length < 160 &&
+      !_looksTechnical(cleaned)) {
+    return cleaned;
+  }
+
+  return 'Ocurrió un error inesperado. Intenta de nuevo en un momento.';
+}
+
+bool _looksTechnical(String s) {
+  final low = s.toLowerCase();
+  return low.contains('exception') ||
+      low.contains('stack trace') ||
+      low.contains('#0 ') ||
+      low.contains('postgrest') ||
+      low.contains('sqlstate') ||
+      low.contains('socket') ||
+      low.contains('clientexception') ||
+      low.contains('oserror') ||
+      RegExp(r'^[a-z_]+_[a-z_]+\(.*\)$').hasMatch(low);
+}
+
+// ============================================================
+//  SCREEN
+// ============================================================
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({Key? key}) : super(key: key);
 
@@ -117,7 +262,9 @@ class _SettingsScreenState extends State<SettingsScreen>
       try {
         await PrinterService.instance.autoConnect();
         if (mounted) setState(() {});
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ Auto-connect impresora: $e');
+      }
     });
   }
 
@@ -130,16 +277,12 @@ class _SettingsScreenState extends State<SettingsScreen>
     super.dispose();
   }
 
-  // ============================================================
-  //  BUILD · con restricciones por rol
-  // ============================================================
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AppProvider>(context);
     final p = _P(Theme.of(context).brightness == Brightness.dark);
     final isDesktop = ResponsiveHelper.isDesktop();
 
-    // ✅ Detectar si es vendedor para ocultar secciones sensibles
     final esVendedor = provider.rol == 'vendedor';
 
     return Scaffold(
@@ -169,7 +312,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                       _heroHeader(provider, p, isDesktop),
                       const SizedBox(height: 24),
 
-                      // ─── Modo de ventas (visible para todos)
                       _sectionTitle(p, Icons.point_of_sale_rounded,
                           'Modo de ventas',
                           'Define cómo quieres registrar las operaciones.'),
@@ -177,7 +319,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                       _salesMode(provider, p, isDesktop),
                       const SizedBox(height: 26),
 
-                      // ─── Datos de transferencia (SOLO no-vendedores)
                       if (!esVendedor) ...[
                         _sectionTitle(p, Icons.receipt_long_rounded,
                             'Datos de transferencia',
@@ -187,7 +328,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                         const SizedBox(height: 26),
                       ],
 
-                      // ─── Impresora térmica (visible para todos)
                       _sectionTitle(p, Icons.print_rounded,
                           'Impresora térmica',
                           'Conecta tu Xprinter por USB/OTG para imprimir facturas.'),
@@ -195,7 +335,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                       _printerSection(provider, p),
                       const SizedBox(height: 26),
 
-                      // ─── Sincronización (visible para todos)
                       _sectionTitle(p, Icons.cloud_sync_rounded,
                           'Sincronización',
                           'Revisa el estado de la cola de operaciones pendientes.'),
@@ -203,7 +342,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                       _syncSection(provider, p, isDesktop),
                       const SizedBox(height: 26),
 
-                      // ─── Valores del negocio (SOLO no-vendedores)
                       if (!esVendedor) ...[
                         _sectionTitle(p, Icons.currency_exchange_rounded,
                             'Valores del negocio',
@@ -226,7 +364,6 @@ class _SettingsScreenState extends State<SettingsScreen>
                         const SizedBox(height: 26),
                       ],
 
-                      // ─── Apariencia (visible para todos)
                       _sectionTitle(p, Icons.palette_outlined, 'Apariencia',
                           'Personaliza cómo se muestra Nexora.'),
                       const SizedBox(height: 12),
@@ -956,8 +1093,20 @@ class _SettingsScreenState extends State<SettingsScreen>
                   icon: Icons.link_off_rounded,
                   color: _C.danger,
                   onPressed: () async {
-                    await service.disconnect();
-                    if (mounted) setState(() {});
+                    try {
+                      await service.disconnect();
+                      if (mounted) {
+                        mostrarSnackBar(
+                            mensaje: 'Impresora desconectada',
+                            esExito: true);
+                        setState(() {});
+                      }
+                    } catch (e) {
+                      if (mounted) {
+                        mostrarSnackBar(
+                            mensaje: _humanError(e), esExito: false);
+                      }
+                    }
                   },
                 ),
             ],
@@ -1139,7 +1288,8 @@ class _SettingsScreenState extends State<SettingsScreen>
       final service = PrinterService.instance;
       if (!service.isConnected) {
         mostrarSnackBar(
-            mensaje: 'No hay impresora conectada', esExito: false);
+            mensaje: 'No hay impresora conectada. Búscala primero.',
+            esExito: false);
         return;
       }
 
@@ -1167,14 +1317,18 @@ class _SettingsScreenState extends State<SettingsScreen>
       if (mounted) {
         mostrarSnackBar(
           mensaje: ok
-              ? 'Ticket de prueba enviado'
-              : 'Error al imprimir. Verifica la conexión.',
+              ? '✅ Ticket de prueba enviado correctamente'
+              : 'No se pudo imprimir. Verifica que la impresora esté encendida y el cable conectado.',
           esExito: ok,
+          duracion: Duration(seconds: ok ? 4 : 8),
         );
       }
     } catch (e) {
       if (mounted) {
-        mostrarSnackBar(mensaje: 'Error: $e', esExito: false);
+        mostrarSnackBar(
+            mensaje: _humanError(e),
+            esExito: false,
+            duracion: const Duration(seconds: 8));
       }
     } finally {
       if (mounted) setState(() => _printerTesting = false);
@@ -1477,7 +1631,9 @@ class _SettingsScreenState extends State<SettingsScreen>
       if (!mounted) return;
 
       if (path == null) {
-        _snack('No se pudo exportar el archivo', error: true);
+        _snack(
+            'No pudimos crear el archivo. Intenta de nuevo.',
+            error: true);
         return;
       }
 
@@ -1487,13 +1643,20 @@ class _SettingsScreenState extends State<SettingsScreen>
           subject: 'Cola de pendientes Nexora',
           text: 'Adjunto la cola de pendientes para diagnóstico.',
         );
-      } catch (_) {}
+      } catch (e) {
+        debugPrint('⚠️ Share falló: $e');
+        if (!mounted) return;
+        _snack(
+            'El archivo se guardó pero no pudimos compartirlo automáticamente.',
+            error: true);
+        return;
+      }
 
       if (!mounted) return;
-      _snack('Archivo exportado en: $path');
+      _snack('Archivo exportado correctamente');
     } catch (e) {
       if (!mounted) return;
-      _snack('Error al exportar: $e', error: true);
+      _snack(_humanError(e), error: true);
     } finally {
       if (mounted) setState(() => _exportando = false);
     }
@@ -1505,10 +1668,10 @@ class _SettingsScreenState extends State<SettingsScreen>
       await Clipboard.setData(ClipboardData(text: jsonStr));
       if (!mounted) return;
       _snack(
-          'JSON copiado (${provider.pendientesDetalle.length} pendientes)');
+          'JSON copiado · ${provider.pendientesDetalle.length} pendientes');
     } catch (e) {
       if (!mounted) return;
-      _snack('Error al copiar: $e', error: true);
+      _snack(_humanError(e), error: true);
     }
   }
 
@@ -1517,18 +1680,21 @@ class _SettingsScreenState extends State<SettingsScreen>
     try {
       final total = await provider.reiniciarTodosLosIntentos();
       if (!mounted) return;
-      _snack('Reintentando $total operación${total == 1 ? '' : 'es'}…');
+      _snack(
+          'Reintentando $total operación${total == 1 ? '' : 'es'}…');
       await provider.sincronizarManual();
       if (!mounted) return;
       final restantes = provider.pendientesDetalle.length;
       if (restantes == 0) {
         _snack('¡Todo sincronizado!');
       } else {
-        _snack('Quedan $restantes pendientes.', error: true);
+        _snack(
+            'Quedan $restantes pendientes. Revisa los detalles para más información.',
+            error: true);
       }
     } catch (e) {
       if (!mounted) return;
-      _snack('Error al reintentar: $e', error: true);
+      _snack(_humanError(e), error: true);
     } finally {
       if (mounted) setState(() => _reintentando = false);
     }
@@ -1605,7 +1771,7 @@ class _SettingsScreenState extends State<SettingsScreen>
       _snack('Se eliminaron $eliminados pendientes bloqueados');
     } catch (e) {
       if (!mounted) return;
-      _snack('Error al limpiar: $e', error: true);
+      _snack(_humanError(e), error: true);
     } finally {
       if (mounted) setState(() => _limpiando = false);
     }
@@ -1627,7 +1793,11 @@ class _SettingsScreenState extends State<SettingsScreen>
   }
 
   void _snack(String msg, {bool error = false}) {
-    mostrarSnackBar(mensaje: msg, esExito: !error);
+    mostrarSnackBar(
+      mensaje: msg,
+      esExito: !error,
+      duracion: Duration(seconds: error ? 8 : 4),
+    );
   }
 
   Widget _exchangeCard(AppProvider provider, _P p) {
@@ -2163,7 +2333,7 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
   final List<PrinterDevice> _devices = [];
   bool _scanning = true;
   bool _connecting = false;
-  String? _error;
+  String? _error; // ✅ Mensaje amigable (no excepción cruda)
   StreamSubscription<PrinterDevice>? _scanSub;
   Timer? _timeout;
 
@@ -2193,7 +2363,9 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
         },
         onError: (e) {
           if (!mounted) return;
-          setState(() => _error = e.toString());
+          debugPrint('⚠️ Error al escanear impresoras: $e');
+          // ✅ Traducir el error antes de guardar
+          setState(() => _error = _humanError(e));
         },
         onDone: () {
           if (!mounted) return;
@@ -2207,8 +2379,9 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
         }
       });
     } catch (e) {
+      debugPrint('⚠️ Error al iniciar escaneo: $e');
       setState(() {
-        _error = e.toString();
+        _error = _humanError(e);
         _scanning = false;
       });
     }
@@ -2234,24 +2407,26 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
         Navigator.of(context, rootNavigator: true).pop();
         await Future.delayed(const Duration(milliseconds: 400));
         mostrarSnackBar(
-          mensaje: 'Impresora conectada: ${device.name ?? "USB"}',
+          mensaje: '✅ Impresora conectada: ${device.name ?? "USB"}',
           esExito: true,
         );
       } else {
         setState(() => _connecting = false);
         mostrarSnackBar(
           mensaje:
-              'No se pudo conectar. Verifica el cable USB y la alimentación.',
+              'No pudimos conectar con la impresora. Verifica el cable USB y que esté encendida.',
           esExito: false,
+          duracion: const Duration(seconds: 8),
         );
       }
     } catch (e) {
-      debugPrint('❌ Error al conectar: $e');
+      debugPrint('❌ Error al conectar impresora: $e');
       if (mounted) {
         setState(() => _connecting = false);
         mostrarSnackBar(
-          mensaje: 'Error al conectar: $e',
+          mensaje: _humanError(e),
           esExito: false,
+          duracion: const Duration(seconds: 8),
         );
       }
     }
@@ -2400,7 +2575,7 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
                                 ),
                                 const SizedBox(height: 14),
                                 Text(
-                                  'Error al escanear',
+                                  'No pudimos buscar impresoras',
                                   style: TextStyle(
                                     fontSize: 14,
                                     fontWeight: FontWeight.w900,
@@ -2409,11 +2584,23 @@ class _PrinterScannerDialogState extends State<_PrinterScannerDialog> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
+                                  // ✅ Ahora _error ya es un mensaje amigable
                                   _error!,
                                   textAlign: TextAlign.center,
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: 11.5,
+                                    height: 1.4,
                                     color: p.textMuted,
+                                  ),
+                                ),
+                                const SizedBox(height: 14),
+                                TextButton.icon(
+                                  onPressed: _startScan,
+                                  icon: const Icon(Icons.refresh_rounded,
+                                      size: 16),
+                                  label: const Text('Reintentar'),
+                                  style: TextButton.styleFrom(
+                                    foregroundColor: _C.primary,
                                   ),
                                 ),
                               ],
@@ -2751,6 +2938,11 @@ class _PendientesDialogState extends State<_PendientesDialog> {
         ? _C.danger
         : (intentos > 0 ? _C.warning : _C.primary);
 
+    // ✅ Traducir el error guardado (crudo) a un mensaje amigable
+    final friendlyError = error != null && error.isNotEmpty
+        ? _humanError(error)
+        : null;
+
     return ExpansionTile(
       tilePadding:
           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -2802,7 +2994,7 @@ class _PendientesDialogState extends State<_PendientesDialog> {
       children: [
         _infoLine(palette, 'Clave interna', key),
         _infoLine(palette, 'Timestamp', timestamp),
-        if (error != null) ...[
+        if (friendlyError != null) ...[
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(10),
@@ -2818,11 +3010,12 @@ class _PendientesDialogState extends State<_PendientesDialog> {
                     color: _C.danger, size: 16),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: SelectableText(
-                    error,
+                  child: Text(
+                    friendlyError, // ✅ Mensaje amigable
                     style: const TextStyle(
-                      fontSize: 11,
-                      fontFamily: 'monospace',
+                      fontSize: 11.5,
+                      height: 1.4,
+                      fontWeight: FontWeight.w600,
                       color: _C.danger,
                     ),
                   ),

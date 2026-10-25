@@ -1,12 +1,11 @@
 // ============================================================
 //  mi_tienda_screen.dart  ·  NEXORA BUSINESS
-//  Gestión completa de la tienda pública + servicios
-//  · Sync automático a Supabase (Red Nexora)
-//  · Catálogo construido desde inventario real
+//  Gestión de tienda pública + servicios · Edición premium
+//  · Sin URL visible
+//  · Fix: _C.indigo añadido
 // ============================================================
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -30,7 +29,7 @@ String keyTiendaDeEmpresa(String id) => 'tiendaPublica_$id';
 String keyMisServiciosDeEmpresa(String id) => 'my_services_$id';
 
 // ════════════════════════════════════════════════════════════
-//  PALETA
+//  PALETA (indigo agregado)
 // ════════════════════════════════════════════════════════════
 class _C {
   static const primary   = Color(0xFF1A5CFF);
@@ -42,6 +41,7 @@ class _C {
   static const purple    = Color(0xFF8B5CF6);
   static const pink      = Color(0xFFEC4899);
   static const gold      = Color(0xFFCA8A04);
+  static const indigo    = Color(0xFF6366F1); // ✅ Fix: agregado
 
   static const gradBrand  = [Color(0xFF1A5CFF), Color(0xFF06B6D4)];
   static const gradPurple = [Color(0xFF8B5CF6), Color(0xFF6366F1)];
@@ -111,9 +111,9 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     super.dispose();
   }
 
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
   //  CARGA
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
   Future<void> _cargar() async {
     final provider = Provider.of<AppProvider>(context, listen: false);
     final empresaId = provider.empresaId ?? '';
@@ -124,7 +124,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
 
     final tiendaKey = keyTiendaDeEmpresa(empresaId);
 
-    // Limpieza de clave legacy
     if (provider.catalogosBox.get('tiendaPublicaConfig') != null) {
       await provider.catalogosBox.delete('tiendaPublicaConfig');
     }
@@ -132,7 +131,8 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     TiendaPublica? t;
     final raw = provider.catalogosBox.get(tiendaKey);
     if (raw is Map) {
-      final temp = TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
+      final temp =
+          TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
       if (temp.empresaId == empresaId) t = temp;
     }
 
@@ -150,11 +150,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
 
     final catalogo = _buildCatalogo(provider, limpios);
 
-    t = t.copyWith(
-      productosPublicados: limpios,
-      catalogo: catalogo,
-    );
-
+    t = t.copyWith(productosPublicados: limpios, catalogo: catalogo);
     await _persistirYRed(provider, t);
 
     if (!mounted) return;
@@ -193,16 +189,11 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     return result;
   }
 
-  // ============================================================
-  //  PERSISTIR local + SUPABASE
-  // ============================================================
   Future<void> _persistirYRed(
       AppProvider provider, TiendaPublica t) async {
-    // 1) Local namespaced
     await provider.catalogosBox.put(
         keyTiendaDeEmpresa(t.empresaId), t.toJson());
 
-    // 2) Local "red" para lectura rápida en este dispositivo
     final raw =
         (provider.catalogosBox.get(kNetworkStoresKey) as List?) ?? [];
     final list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
@@ -215,7 +206,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     }
     await provider.catalogosBox.put(kNetworkStoresKey, list);
 
-    // 3) SUPABASE — sube para que otros dispositivos lo vean
     if (provider.isOnline) {
       try {
         await provider.publicarTiendaEnRed(
@@ -233,10 +223,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
           catalogo: t.catalogo.map((p) => p.toJson()).toList(),
           activa: t.activa,
         );
-        print('✅ Tienda publicada en Supabase');
-      } catch (e) {
-        print('⚠️ Error publicando tienda en Supabase: $e');
-      }
+      } catch (_) {}
     }
   }
 
@@ -250,9 +237,9 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     _horarioCtrl.text = t.horario ?? '';
   }
 
-  // ============================================================
-  //  GUARDAR
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
+  //  ACCIONES
+  // ══════════════════════════════════════════════════════════
   Future<void> _guardar() async {
     if (_tienda == null) return;
     final provider = Provider.of<AppProvider>(context, listen: false);
@@ -261,17 +248,14 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     try {
       final limpios = _tienda!.productosPublicados;
       final catalogo = _buildCatalogo(provider, limpios);
+      final nombre = _nombreCtrl.text.trim().isEmpty
+          ? _tienda!.nombre
+          : _nombreCtrl.text.trim();
 
       final nueva = _tienda!.copyWith(
-        nombre: _nombreCtrl.text.trim().isEmpty
-            ? _tienda!.nombre
-            : _nombreCtrl.text.trim(),
+        nombre: nombre,
         descripcion: _descripcionCtrl.text.trim(),
-        slug: TiendaPublica.generarSlug(
-          _nombreCtrl.text.trim().isEmpty
-              ? _tienda!.nombre
-              : _nombreCtrl.text.trim(),
-        ),
+        slug: TiendaPublica.generarSlug(nombre),
         telefono: _telefonoCtrl.text.trim().isEmpty
             ? null : _telefonoCtrl.text.trim(),
         whatsapp: _whatsappCtrl.text.trim().isEmpty
@@ -321,16 +305,19 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
 
   Future<void> _compartir() async {
     if (_tienda == null) return;
+    // ✅ URL eliminada — solo compartimos nombre y descripción
     final mensaje = '🛍️ ¡Visita mi tienda en línea!\n\n'
         '${_tienda!.nombre}\n'
         '${_tienda!.descripcion}\n\n'
-        '${_tienda!.urlPublica}';
+        '¡Contáctame para más información!';
     await Share.share(mensaje);
   }
 
-  // ============================================================
-  //  UBICACIÓN
-  // ============================================================
+  void _verTiendaPublica() {
+    if (_tienda == null) return;
+    Navigator.pushNamed(context, '/vista-tienda', arguments: _tienda);
+  }
+
   Future<void> _usarMiUbicacion() async {
     if (_tienda == null) return;
     setState(() => _obteniendoUbicacion = true);
@@ -350,7 +337,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
             mensaje: 'Permiso de ubicación denegado', esExito: false);
         return;
       }
-
       final pos = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.high,
       );
@@ -380,8 +366,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
     if (resultado != null) {
       await _guardarCoordenadas(resultado.latitude, resultado.longitude);
-      mostrarSnackBar(
-          mensaje: 'Ubicación actualizada', esExito: true);
+      mostrarSnackBar(mensaje: 'Ubicación actualizada', esExito: true);
     }
   }
 
@@ -428,17 +413,17 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     } catch (_) {}
   }
 
-  // ============================================================
-  //  MIS SERVICIOS
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
+  //  SERVICIOS
+  // ══════════════════════════════════════════════════════════
   List<ServicioPublico> _misServicios(AppProvider provider) {
     final empresaId = provider.empresaId ?? '';
     if (empresaId.isEmpty) return [];
     final raw = (provider.catalogosBox
-            .get(keyMisServiciosDeEmpresa(empresaId)) as List?) ??
-        [];
+            .get(keyMisServiciosDeEmpresa(empresaId)) as List?) ?? [];
     return raw
-        .map((e) => ServicioPublico.fromJson(Map<String, dynamic>.from(e)))
+        .map((e) =>
+            ServicioPublico.fromJson(Map<String, dynamic>.from(e)))
         .toList();
   }
 
@@ -448,7 +433,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     if (empresaId.isEmpty) return;
     final myKey = keyMisServiciosDeEmpresa(empresaId);
 
-    // 1) Local
     final raw = (provider.catalogosBox.get(myKey) as List?) ?? [];
     final list = raw.map((e) => Map<String, dynamic>.from(e)).toList();
     final idx = list.indexWhere((e) => e['id'] == s.id);
@@ -459,7 +443,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     }
     await provider.catalogosBox.put(myKey, list);
 
-    // 2) Red local
     final netRaw =
         (provider.catalogosBox.get(kNetworkSvcsKey) as List?) ?? [];
     final netList =
@@ -472,7 +455,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     }
     await provider.catalogosBox.put(kNetworkSvcsKey, netList);
 
-    // 3) Supabase
     if (provider.isOnline) {
       try {
         await provider.publicarServicioEnRed(
@@ -490,29 +472,61 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
           longitud: s.longitud,
           activo: s.activo,
         );
-        print('✅ Servicio publicado en Supabase');
-      } catch (e) {
-        print('⚠️ Error publicando servicio: $e');
-      }
+      } catch (_) {}
     }
   }
 
   Future<void> _eliminarServicio(
       AppProvider provider, ServicioPublico s) async {
+    final p = _P(Theme.of(context).brightness == Brightness.dark);
     final ok = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Eliminar servicio'),
-        content: Text('¿Seguro que quieres eliminar "${s.nombre}"?'),
+        backgroundColor: p.surface,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              width: 38, height: 38,
+              decoration: BoxDecoration(
+                color: _C.danger.withOpacity(.14),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: const Icon(Icons.delete_outline_rounded,
+                  color: _C.danger, size: 19),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text('Eliminar servicio',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: p.textHigh,
+                  )),
+            ),
+          ],
+        ),
+        content: Text(
+            '¿Seguro que quieres eliminar "${s.nombre}"?\n\nEsta acción no se puede deshacer.',
+            style: TextStyle(fontSize: 13, color: p.textMid)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+            child: Text('Cancelar',
+                style: TextStyle(color: p.textMid)),
           ),
-          TextButton(
+          ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: _C.danger),
-            child: const Text('Eliminar'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _C.danger,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(11)),
+            ),
+            child: const Text('Eliminar',
+                style: TextStyle(fontWeight: FontWeight.w900)),
           ),
         ],
       ),
@@ -554,17 +568,20 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
   Future<void> _editarServicio(
       AppProvider provider, _P p, ServicioPublico? original) async {
     final nombreCtrl = TextEditingController(text: original?.nombre ?? '');
-    final descCtrl   = TextEditingController(text: original?.descripcion ?? '');
+    final descCtrl =
+        TextEditingController(text: original?.descripcion ?? '');
     final precioCtrl = TextEditingController(
         text: original?.precioDesde?.toStringAsFixed(0) ?? '');
-    final notaCtrl   = TextEditingController(text: original?.precioNota ?? '');
-    final tagsCtrl   = TextEditingController(
-        text: (original?.tags ?? []).join(', '));
+    final notaCtrl =
+        TextEditingController(text: original?.precioNota ?? '');
+    final tagsCtrl =
+        TextEditingController(text: (original?.tags ?? []).join(', '));
     final telCtrl = TextEditingController(
         text: original?.telefono ?? _telefonoCtrl.text);
     final waCtrl = TextEditingController(
         text: original?.whatsapp ?? _whatsappCtrl.text);
-    final horCtrl = TextEditingController(text: original?.horario ?? '');
+    final horCtrl =
+        TextEditingController(text: original?.horario ?? '');
 
     String cat = original?.categoriaId ?? 'reparacion';
     bool activo = original?.activo ?? true;
@@ -574,7 +591,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       isScrollControlled: true,
       backgroundColor: p.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => Padding(
@@ -594,28 +611,53 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 18),
                 Row(
                   children: [
                     Container(
-                      width: 38, height: 38,
+                      width: 42, height: 42,
                       decoration: BoxDecoration(
                         gradient: const LinearGradient(
                             colors: _C.gradPurple),
-                        borderRadius: BorderRadius.circular(11),
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _C.purple.withOpacity(.32),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
                       child: const Icon(Icons.handyman_rounded,
-                          color: Colors.white, size: 19),
+                          color: Colors.white, size: 20),
                     ),
                     const SizedBox(width: 12),
-                    Text(
-                      original == null
-                          ? 'Publicar nuevo servicio'
-                          : 'Editar servicio',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                        color: p.textHigh,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            original == null
+                                ? 'Publicar servicio'
+                                : 'Editar servicio',
+                            style: TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w900,
+                              color: p.textHigh,
+                              letterSpacing: -0.3,
+                            ),
+                          ),
+                          Text(
+                            original == null
+                                ? 'Añade un servicio a tu tienda'
+                                : 'Actualiza la información',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: p.textMuted,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -625,8 +667,8 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                   value: cat,
                   decoration: InputDecoration(
                     labelText: 'Categoría',
-                    labelStyle:
-                        TextStyle(fontSize: 12.5, color: p.textMuted),
+                    labelStyle: TextStyle(
+                        fontSize: 12.5, color: p.textMuted),
                     filled: true,
                     fillColor: p.surface2,
                     border: OutlineInputBorder(
@@ -639,7 +681,8 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                             value: e.key,
                             child: Text(e.value,
                                 style: TextStyle(
-                                    fontSize: 13, color: p.textHigh)),
+                                    fontSize: 13,
+                                    color: p.textHigh)),
                           ))
                       .toList(),
                   onChanged: (v) => setLocal(() => cat = v ?? cat),
@@ -654,7 +697,8 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                 Row(
                   children: [
                     Expanded(
-                      child: _fieldMini(precioCtrl, 'Precio (opcional)',
+                      child: _fieldMini(
+                          precioCtrl, 'Precio (opcional)',
                           Icons.attach_money_rounded, p,
                           keyboardType: TextInputType.number),
                     ),
@@ -666,19 +710,22 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
-                _fieldMini(tagsCtrl, 'Etiquetas (separadas por coma)',
+                _fieldMini(tagsCtrl,
+                    'Etiquetas (separadas por coma)',
                     Icons.local_offer_rounded, p),
                 const SizedBox(height: 10),
                 Row(
                   children: [
                     Expanded(
-                      child: _fieldMini(telCtrl, 'Teléfono',
+                      child: _fieldMini(
+                          telCtrl, 'Teléfono',
                           Icons.phone_rounded, p,
                           keyboardType: TextInputType.phone),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: _fieldMini(waCtrl, 'WhatsApp',
+                      child: _fieldMini(
+                          waCtrl, 'WhatsApp',
                           Icons.chat_rounded, p,
                           keyboardType: TextInputType.phone),
                     ),
@@ -687,19 +734,32 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                 const SizedBox(height: 10),
                 _fieldMini(horCtrl, 'Horario',
                     Icons.schedule_rounded, p),
-                const SizedBox(height: 10),
-                SwitchListTile.adaptive(
-                  contentPadding: EdgeInsets.zero,
-                  title: Text('Servicio activo',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w800,
-                          color: p.textHigh)),
-                  value: activo,
-                  activeColor: _C.purple,
-                  onChanged: (v) => setLocal(() => activo = v),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: p.surface2,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('Servicio activo',
+                        style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: p.textHigh)),
+                    subtitle: Text(
+                        activo
+                            ? 'Visible en la Red Nexora'
+                            : 'Oculto para otros negocios',
+                        style: TextStyle(
+                            fontSize: 11, color: p.textMuted)),
+                    value: activo,
+                    activeColor: _C.purple,
+                    onChanged: (v) => setLocal(() => activo = v),
+                  ),
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 16),
                 FilledButton.icon(
                   onPressed: () async {
                     if (nombreCtrl.text.trim().isEmpty ||
@@ -714,9 +774,10 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                       id: original?.id ??
                           'svc-${DateTime.now().millisecondsSinceEpoch}',
                       empresaId: empresaId,
-                      nombreEmpresa: _nombreCtrl.text.trim().isEmpty
-                          ? (provider.nombreEmpresa ?? 'Mi Empresa')
-                          : _nombreCtrl.text.trim(),
+                      nombreEmpresa:
+                          _nombreCtrl.text.trim().isEmpty
+                              ? (provider.nombreEmpresa ?? 'Mi Empresa')
+                              : _nombreCtrl.text.trim(),
                       categoriaId: cat,
                       nombre: nombreCtrl.text.trim(),
                       descripcion: descCtrl.text.trim(),
@@ -813,9 +874,9 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
   //  BUILD
-  // ============================================================
+  // ══════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final provider = Provider.of<AppProvider>(context);
@@ -843,33 +904,39 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                 physics: const AlwaysScrollableScrollPhysics(
                     parent: BouncingScrollPhysics()),
                 padding: EdgeInsets.fromLTRB(
-                  isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 40),
+                  isDesktop ? 24 : 14,
+                  14,
+                  isDesktop ? 24 : 14,
+                  _editando ? 110 : 40,
+                ),
                 child: Center(
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 900),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _heroCard(provider, p),
+                        _heroPremium(provider, p),
                         const SizedBox(height: 16),
                         _statsRow(provider, p, isDesktop),
                         const SizedBox(height: 16),
-                        _accionesRapidas(context, provider, p, isDesktop),
+                        _accionesRapidas(
+                            context, provider, p, isDesktop),
                         const SizedBox(height: 22),
-                        _seccionMisServicios(context, provider, p),
+                        _seccionServicios(context, provider, p),
                         const SizedBox(height: 22),
-                        _seccionUbicacion(p, isDesktop),
+                        _seccionUbicacion(p),
                         const SizedBox(height: 22),
-                        _seccionInfo(provider, p, isDesktop),
+                        _seccionInfo(provider, p),
                         const SizedBox(height: 22),
-                        _seccionContacto(p, isDesktop),
-                        const SizedBox(height: 30),
+                        _seccionContacto(p),
+                        const SizedBox(height: 20),
                       ],
                     ),
                   ),
                 ),
               ),
             ),
+          if (_editando && _tienda != null) _bottomSaveBar(p),
         ],
       ),
     );
@@ -901,13 +968,17 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       elevation: 0,
       centerTitle: false,
       surfaceTintColor: Colors.transparent,
+      leading: IconButton(
+        onPressed: () => Navigator.pop(context),
+        icon: Icon(Icons.arrow_back_rounded, color: p.textHigh),
+      ),
       title: Row(
         children: [
           Container(
-            width: 36, height: 36,
+            width: 34, height: 34,
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: _C.gradBrand),
-              borderRadius: BorderRadius.circular(11),
+              borderRadius: BorderRadius.circular(10),
               boxShadow: [
                 BoxShadow(
                   color: _C.primary.withOpacity(.32),
@@ -917,42 +988,46 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
               ],
             ),
             child: const Icon(Icons.storefront_rounded,
-                color: Colors.white, size: 18),
+                color: Colors.white, size: 17),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Mi tienda',
-                  style: TextStyle(
-                    fontSize: 17,
+              Text(_editando ? 'Editando tienda' : 'Mi tienda',
+                  style: const TextStyle(
+                    fontSize: 16.5,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.3,
                   )),
-              Text('Tu negocio en línea',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                    color: p.textMuted,
-                  )),
+              Text(
+                _editando
+                    ? 'Modo edición activo'
+                    : 'Tu negocio en la Red Nexora',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: _editando ? _C.warning : p.textMuted,
+                ),
+              ),
             ],
           ),
         ],
       ),
       actions: [
-        if (_tienda != null && !_editando)
+        if (_tienda != null && !_editando) ...[
           IconButton(
-            tooltip: 'Editar',
-            onPressed: () => setState(() => _editando = true),
-            icon: Icon(Icons.edit_rounded, color: p.textHigh),
+            tooltip: 'Ver como cliente',
+            onPressed: _verTiendaPublica,
+            icon: Icon(Icons.visibility_rounded, color: p.textHigh),
           ),
-        if (_tienda != null)
           IconButton(
             tooltip: 'Compartir',
             onPressed: _compartir,
             icon: Icon(Icons.share_rounded, color: p.textHigh),
           ),
+        ],
       ],
     );
   }
@@ -974,17 +1049,20 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                   )),
               const SizedBox(height: 10),
               TextButton(
-                  onPressed: _cargar,
-                  child: const Text('Reintentar')),
+                  onPressed: _cargar, child: const Text('Reintentar')),
             ],
           ),
         ),
       );
 
-  Widget _heroCard(AppProvider provider, _P p) {
+  // ══════════════════════════════════════════════════════════
+  //  HERO (sin URL)
+  // ══════════════════════════════════════════════════════════
+  Widget _heroPremium(AppProvider provider, _P p) {
     final t = _tienda!;
+
     return Container(
-      padding: const EdgeInsets.all(22),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           colors: _C.gradBrand,
@@ -1000,123 +1078,171 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 60, height: 60,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(.20),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(
-                      color: Colors.white.withOpacity(.32)),
-                ),
-                child: const Icon(Icons.store_mall_directory_rounded,
-                    color: Colors.white, size: 28),
+          // Patrón decorativo
+          Positioned(
+            top: -40, right: -40,
+            child: Container(
+              width: 160, height: 160,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(.08),
               ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+          ),
+          Positioned(
+            bottom: -50, left: -30,
+            child: Container(
+              width: 140, height: 140,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(.06),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
                   children: [
-                    Text(t.nombre,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 20,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -0.5,
-                          height: 1.15,
-                        )),
-                    const SizedBox(height: 6),
-                    Row(
-                      children: [
-                        Container(
-                          width: 8, height: 8,
-                          decoration: BoxDecoration(
-                            color: t.activa
-                                ? Colors.white
-                                : Colors.white.withOpacity(.5),
-                            shape: BoxShape.circle,
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.white.withOpacity(.6),
-                                blurRadius: 8,
+                    Container(
+                      width: 56, height: 56,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(.22),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(
+                            color: Colors.white.withOpacity(.32),
+                            width: 1.5),
+                      ),
+                      child: const Icon(
+                          Icons.store_mall_directory_rounded,
+                          color: Colors.white, size: 28),
+                    ),
+                    const SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment:
+                            CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            t.nombre,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: -0.5,
+                              height: 1.15,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Container(
+                                width: 8, height: 8,
+                                decoration: BoxDecoration(
+                                  color: t.activa
+                                      ? Colors.white
+                                      : Colors.white.withOpacity(.5),
+                                  shape: BoxShape.circle,
+                                  boxShadow: t.activa
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.white
+                                                .withOpacity(.65),
+                                            blurRadius: 8,
+                                            spreadRadius: 1,
+                                          ),
+                                        ]
+                                      : null,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                t.activa
+                                    ? 'TIENDA ACTIVA'
+                                    : 'TIENDA INACTIVA',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1,
+                                ),
                               ),
                             ],
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          t.activa
-                              ? 'TIENDA ACTIVA'
-                              : 'TIENDA DESACTIVADA',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(.92),
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 1,
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
+                    ),
+                    Switch(
+                      value: t.activa,
+                      onChanged:
+                          _guardando ? null : (_) => _toggleActiva(),
+                      activeColor: Colors.white,
+                      activeTrackColor:
+                          Colors.white.withOpacity(.35),
+                      inactiveThumbColor: Colors.white,
+                      inactiveTrackColor:
+                          Colors.white.withOpacity(.25),
                     ),
                   ],
                 ),
-              ),
-              Switch(
-                value: t.activa,
-                onChanged: (_) => _toggleActiva(),
-                activeColor: Colors.white,
-                activeTrackColor: Colors.white.withOpacity(.35),
-                inactiveThumbColor: Colors.white,
-                inactiveTrackColor: Colors.white.withOpacity(.25),
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 14, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.16),
-              borderRadius: BorderRadius.circular(14),
-              border:
-                  Border.all(color: Colors.white.withOpacity(.24)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.link_rounded,
-                    color: Colors.white, size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(t.urlPublica,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white.withOpacity(.95),
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      )),
-                ),
-                Material(
-                  color: Colors.white.withOpacity(.20),
-                  borderRadius: BorderRadius.circular(9),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(9),
-                    onTap: () {
-                      Clipboard.setData(
-                          ClipboardData(text: t.urlPublica));
-                      mostrarSnackBar(
-                          mensaje: 'Enlace copiado', esExito: true);
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(6),
-                      child: Icon(Icons.copy_rounded,
-                          color: Colors.white, size: 15),
-                    ),
+                const SizedBox(height: 16),
+                // Tagline (reemplaza la URL)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(.14),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: Colors.white.withOpacity(.22),
+                        width: 1),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 32, height: 32,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(.22),
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: const Icon(Icons.public_rounded,
+                            color: Colors.white, size: 16),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment:
+                              CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Visible en la Red Nexora',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              t.activa
+                                  ? 'Otros negocios pueden encontrar tu tienda'
+                                  : 'Activa tu tienda para aparecer en la red',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(.82),
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -1127,47 +1253,45 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
+  // ══════════════════════════════════════════════════════════
+  //  STATS
+  // ══════════════════════════════════════════════════════════
   Widget _statsRow(AppProvider provider, _P p, bool isDesktop) {
     final t = _tienda!;
     final publicados = t.catalogo.length;
     final conStock = t.catalogo.where((x) => x.disponible).length;
     final misServicios = _misServicios(provider).length;
+    final tieneUbic = t.tieneUbicacion;
 
     final tiles = [
       _statTile(p,
           icon: Icons.inventory_2_rounded,
-          label: 'Productos', value: '$publicados',
+          label: 'Productos',
+          value: '$publicados',
           color: _C.primary),
       _statTile(p,
           icon: Icons.check_circle_rounded,
-          label: 'Con stock', value: '$conStock',
+          label: 'Con stock',
+          value: '$conStock',
           color: _C.success),
       _statTile(p,
           icon: Icons.handyman_rounded,
-          label: 'Servicios', value: '$misServicios',
+          label: 'Servicios',
+          value: '$misServicios',
           color: _C.purple),
       _statTile(p,
           icon: Icons.location_on_rounded,
           label: 'Ubicación',
-          value: t.tieneUbicacion ? 'OK' : '—',
-          color: _C.info),
+          value: tieneUbic ? 'OK' : '—',
+          color: tieneUbic ? _C.info : _C.warning),
     ];
 
-    if (isDesktop) {
-      return Row(
-        children: [
-          for (int i = 0; i < tiles.length; i++) ...[
-            Expanded(child: tiles[i]),
-            if (i != tiles.length - 1) const SizedBox(width: 12),
-          ],
-        ],
-      );
-    }
     return Row(
       children: [
         for (int i = 0; i < tiles.length; i++) ...[
           Expanded(child: tiles[i]),
-          if (i != tiles.length - 1) const SizedBox(width: 8),
+          if (i != tiles.length - 1)
+            SizedBox(width: isDesktop ? 12 : 8),
         ],
       ],
     );
@@ -1183,7 +1307,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: Column(
@@ -1193,7 +1317,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
             width: 32, height: 32,
             decoration: BoxDecoration(
               gradient: LinearGradient(colors: [
-                color.withOpacity(.22),
+                color.withOpacity(.24),
                 color.withOpacity(.06),
               ]),
               borderRadius: BorderRadius.circular(10),
@@ -1207,7 +1331,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
             alignment: Alignment.centerLeft,
             child: Text(value,
                 style: TextStyle(
-                  fontSize: 18,
+                  fontSize: 17,
                   fontWeight: FontWeight.w900,
                   letterSpacing: -0.5,
                   color: p.textHigh,
@@ -1227,36 +1351,52 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  Widget _accionesRapidas(BuildContext context, AppProvider provider,
-      _P p, bool isDesktop) {
+  // ══════════════════════════════════════════════════════════
+  //  ACCIONES RÁPIDAS
+  // ══════════════════════════════════════════════════════════
+  Widget _accionesRapidas(BuildContext context,
+      AppProvider provider, _P p, bool isDesktop) {
     final t = _tienda!;
+
     final acciones = [
-      _accionTile(context, p,
-          icon: Icons.add_photo_alternate_rounded,
-          label: 'Publicar', sub: 'Añadir producto',
-          color: _C.primary,
-          onTap: () => Navigator.pushNamed(
-                  context, '/publicar-producto')
-              .then((_) => _cargar())),
-      _accionTile(context, p,
-          icon: Icons.inventory_rounded,
-          label: 'Productos',
-          sub: '${t.catalogo.length} en tienda',
-          color: _C.purple,
-          onTap: () => Navigator.pushNamed(
-                  context, '/productos-publicados')
-              .then((_) => _cargar())),
-      _accionTile(context, p,
-          icon: Icons.map_rounded,
-          label: 'Ver en mapa',
-          sub: t.tieneUbicacion ? 'Ubicación lista' : 'Sin coordenadas',
-          color: _C.info,
-          onTap: _verEnMapa),
-      _accionTile(context, p,
-          icon: Icons.share_rounded,
-          label: 'Compartir', sub: 'Enviar enlace',
-          color: _C.pink,
-          onTap: _compartir),
+      _accionTile(
+        context, p,
+        icon: Icons.add_photo_alternate_rounded,
+        label: 'Publicar',
+        sub: 'Nuevo producto',
+        color: _C.primary,
+        badge: '+',
+        onTap: () => Navigator.pushNamed(
+                context, '/publicar-producto')
+            .then((_) => _cargar()),
+      ),
+      _accionTile(
+        context, p,
+        icon: Icons.inventory_rounded,
+        label: 'Productos',
+        sub: '${t.catalogo.length} en tienda',
+        color: _C.purple,
+        badge: t.catalogo.isEmpty ? null : '${t.catalogo.length}',
+        onTap: () => Navigator.pushNamed(
+                context, '/productos-publicados')
+            .then((_) => _cargar()),
+      ),
+      _accionTile(
+        context, p,
+        icon: Icons.visibility_rounded,
+        label: 'Ver tienda',
+        sub: 'Como la ven otros',
+        color: _C.info,
+        onTap: _verTiendaPublica,
+      ),
+      _accionTile(
+        context, p,
+        icon: Icons.share_rounded,
+        label: 'Compartir',
+        sub: 'Enviar info',
+        color: _C.pink,
+        onTap: _compartir,
+      ),
     ];
 
     return GridView.count(
@@ -1275,48 +1415,85 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       required String label,
       required String sub,
       required Color color,
+      String? badge,
       required VoidCallback onTap}) {
     return Material(
       color: Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             color: p.surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: p.border),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: p.border, width: 1.2),
             boxShadow: p.shadowSm,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: Stack(
             children: [
-              Container(
-                width: 38, height: 38,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    color.withOpacity(.22),
-                    color.withOpacity(.06),
-                  ]),
-                  borderRadius: BorderRadius.circular(11),
-                  border: Border.all(color: color.withOpacity(.24)),
-                ),
-                child: Icon(icon, color: color, size: 18),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 38, height: 38,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [
+                        color.withOpacity(.24),
+                        color.withOpacity(.06),
+                      ]),
+                      borderRadius: BorderRadius.circular(11),
+                      border:
+                          Border.all(color: color.withOpacity(.24)),
+                    ),
+                    child: Icon(icon, color: color, size: 18),
+                  ),
+                  const Spacer(),
+                  Text(label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                        color: p.textHigh,
+                      )),
+                  const SizedBox(height: 2),
+                  Text(sub,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                          fontSize: 10.5, color: p.textMuted)),
+                ],
               ),
-              const Spacer(),
-              Text(label,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w900,
-                    color: p.textHigh,
-                  )),
-              const SizedBox(height: 2),
-              Text(sub,
-                  maxLines: 1, overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10.5, color: p.textMuted)),
+              if (badge != null)
+                Positioned(
+                  top: 0, right: 0,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 7, vertical: 2),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [
+                        color,
+                        color.withOpacity(.75),
+                      ]),
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: [
+                        BoxShadow(
+                          color: color.withOpacity(.30),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Text(badge,
+                        style: const TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        )),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1324,7 +1501,10 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  Widget _seccionMisServicios(
+  // ══════════════════════════════════════════════════════════
+  //  SERVICIOS
+  // ══════════════════════════════════════════════════════════
+  Widget _seccionServicios(
       BuildContext context, AppProvider provider, _P p) {
     final mis = _misServicios(provider);
 
@@ -1333,7 +1513,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: Column(
@@ -1344,12 +1524,13 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
               Container(
                 width: 34, height: 34,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(colors: _C.gradPurple),
+                  gradient:
+                      const LinearGradient(colors: _C.gradPurple),
                   borderRadius: BorderRadius.circular(10),
                   boxShadow: [
                     BoxShadow(
-                      color: _C.purple.withOpacity(.28),
-                      blurRadius: 10,
+                      color: _C.purple.withOpacity(.32),
+                      blurRadius: 12,
                       offset: const Offset(0, 4),
                     ),
                   ],
@@ -1359,86 +1540,125 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text('Mis servicios publicados',
-                    style: TextStyle(
-                      fontSize: 14.5,
-                      fontWeight: FontWeight.w900,
-                      color: p.textHigh,
-                      letterSpacing: -0.2,
-                    )),
-              ),
-              if (mis.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: _C.purple.withOpacity(.14),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text('${mis.length}',
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        color: _C.purple,
-                      )),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Mis servicios publicados',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w900,
+                          color: p.textHigh,
+                          letterSpacing: -0.2,
+                        )),
+                    Text(
+                      mis.isEmpty
+                          ? 'Aún no publicas servicios'
+                          : '${mis.length} servicio${mis.length == 1 ? '' : 's'} visible${mis.length == 1 ? '' : 's'}',
+                      style: TextStyle(
+                          fontSize: 11, color: p.textMuted),
+                    ),
+                  ],
                 ),
+              ),
+              Material(
+                color: _C.purple,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _editarServicio(provider, p, null),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add_rounded,
+                            color: Colors.white, size: 16),
+                        SizedBox(width: 5),
+                        Text('Añadir',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w900,
+                              color: Colors.white,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 14),
           if (mis.isEmpty)
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: p.surface2,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: p.border),
-              ),
-              child: Column(
-                children: [
-                  const Icon(Icons.info_outline_rounded,
-                      color: _C.warning, size: 26),
-                  const SizedBox(height: 8),
-                  Text('¿Ofreces servicios?',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        color: p.textHigh,
-                      )),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Publica tus servicios para que otros negocios '
-                    'te encuentren en la Red Nexora.',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 11.5,
-                      height: 1.4,
-                      color: p.textMuted,
-                    ),
-                  ),
-                ],
-              ),
-            )
+            _emptyServicios(p, provider)
           else
             Column(
               children: mis
                   .map((s) =>
-                      _servicioMiniCard(context, provider, s, p))
+                      _servicioCard(context, provider, s, p))
                   .toList(),
             ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyServicios(_P p, AppProvider provider) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            _C.purple.withOpacity(p.dark ? .10 : .05),
+            _C.purple.withOpacity(p.dark ? .04 : .02),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _C.purple.withOpacity(.20)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 56, height: 56,
+            decoration: BoxDecoration(
+              color: _C.purple.withOpacity(.14),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.auto_awesome_rounded,
+                color: _C.purple, size: 26),
+          ),
+          const SizedBox(height: 12),
+          Text('¿Ofreces servicios?',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                color: p.textHigh,
+              )),
+          const SizedBox(height: 4),
+          Text(
+            'Publica tus servicios para que otros negocios te encuentren en la Red Nexora.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 11.5,
+              height: 1.45,
+              color: p.textMuted,
+            ),
+          ),
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
               onPressed: () => _editarServicio(provider, p, null),
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('Publicar nuevo servicio'),
+              icon: const Icon(Icons.add_rounded, size: 16),
+              label: const Text('Publicar mi primer servicio',
+                  style: TextStyle(fontWeight: FontWeight.w900)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: _C.purple,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 14),
+                padding: const EdgeInsets.symmetric(vertical: 12),
                 elevation: 0,
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(11),
                 ),
               ),
             ),
@@ -1448,77 +1668,103 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  Widget _servicioMiniCard(
-      BuildContext context,
-      AppProvider provider,
-      ServicioPublico s,
-      _P p) {
+  Widget _servicioCard(BuildContext context, AppProvider provider,
+      ServicioPublico s, _P p) {
+    final color = _colorCategoriaServicio(s.categoriaId);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: p.surface2,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: p.border),
       ),
       child: Row(
         children: [
           Container(
-            width: 40, height: 40,
+            width: 44, height: 44,
             decoration: BoxDecoration(
-              color: _C.purple.withOpacity(.14),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _C.purple.withOpacity(.24)),
+              gradient: LinearGradient(colors: [
+                color.withOpacity(.20),
+                color.withOpacity(.06),
+              ]),
+              borderRadius: BorderRadius.circular(11),
+              border: Border.all(color: color.withOpacity(.28)),
             ),
-            child: const Icon(Icons.handyman_rounded,
-                color: _C.purple, size: 19),
+            child: Icon(_iconCategoriaServicio(s.categoriaId),
+                color: color, size: 20),
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(s.nombre,
-                    maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w800,
-                      color: p.textHigh,
-                    )),
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(s.nombre,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: p.textHigh,
+                          )),
+                    ),
+                    if (!s.activo) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: _C.danger.withOpacity(.14),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: const Text('OCULTO',
+                            style: TextStyle(
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                              color: _C.danger,
+                              letterSpacing: 0.4,
+                            )),
+                      ),
+                    ],
+                  ],
+                ),
                 const SizedBox(height: 3),
                 Row(
                   children: [
-                    Text(CategoriasPublicas.nombreServicio(
-                            s.categoriaId),
-                        style: TextStyle(
-                            fontSize: 10.5, color: p.textMuted)),
-                    const SizedBox(width: 8),
-                    Text(s.precioTexto,
-                        style: const TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w800,
-                          color: _C.success,
-                        )),
+                    Text(
+                      CategoriasPublicas.nombreServicio(
+                          s.categoriaId),
+                      style: TextStyle(
+                          fontSize: 10.5, color: p.textMuted),
+                    ),
+                    if (s.precioDesde != null) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: _C.success.withOpacity(.14),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          s.precioTexto,
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            color: _C.success,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ],
             ),
           ),
-          if (!s.activo)
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: _C.danger.withOpacity(.14),
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: const Text('OCULTO',
-                  style: TextStyle(
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w900,
-                    color: _C.danger,
-                  )),
-            ),
           IconButton(
             iconSize: 18,
             visualDensity: VisualDensity.compact,
@@ -1537,7 +1783,76 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  Widget _seccionUbicacion(_P p, bool isDesktop) {
+  Color _colorCategoriaServicio(String cat) {
+    switch (cat) {
+      case 'reparacion':
+        return _C.info;
+      case 'fabricacion':
+        return _C.warning;
+      case 'estetica':
+        return _C.pink;
+      case 'barberia':
+        return _C.purple;
+      case 'limpieza':
+        return _C.cyan;
+      case 'transporte':
+        return _C.primary;
+      case 'diseno':
+        return _C.purple;
+      case 'informatica':
+        return _C.indigo; // ✅ Fix: ahora compila
+      case 'educacion':
+        return _C.success;
+      case 'fotografia':
+        return _C.pink;
+      case 'mantenimiento':
+        return _C.warning;
+      case 'construccion':
+        return _C.warning;
+      case 'eventos':
+        return _C.pink;
+      default:
+        return _C.purple;
+    }
+  }
+
+  IconData _iconCategoriaServicio(String cat) {
+    switch (cat) {
+      case 'reparacion':
+        return Icons.build_rounded;
+      case 'fabricacion':
+        return Icons.precision_manufacturing_rounded;
+      case 'estetica':
+        return Icons.spa_rounded;
+      case 'barberia':
+        return Icons.content_cut_rounded;
+      case 'limpieza':
+        return Icons.cleaning_services_rounded;
+      case 'transporte':
+        return Icons.local_shipping_rounded;
+      case 'diseno':
+        return Icons.design_services_rounded;
+      case 'informatica':
+        return Icons.computer_rounded;
+      case 'educacion':
+        return Icons.school_rounded;
+      case 'fotografia':
+        return Icons.photo_camera_rounded;
+      case 'mantenimiento':
+        return Icons.engineering_rounded;
+      case 'construccion':
+        return Icons.construction_rounded;
+      case 'eventos':
+        return Icons.event_rounded;
+      default:
+        return Icons.handyman_rounded;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  UBICACIÓN
+  // ══════════════════════════════════════════════════════════
+  Widget _seccionUbicacion(_P p) {
     final t = _tienda!;
     final tiene = t.tieneUbicacion;
 
@@ -1546,7 +1861,7 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: Column(
@@ -1568,14 +1883,27 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                     color: _C.info, size: 16),
               ),
               const SizedBox(width: 10),
-              Text('Ubicación en el mapa',
-                  style: TextStyle(
-                    fontSize: 14.5,
-                    fontWeight: FontWeight.w900,
-                    color: p.textHigh,
-                    letterSpacing: -0.2,
-                  )),
-              const Spacer(),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Ubicación en el mapa',
+                        style: TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w900,
+                          color: p.textHigh,
+                          letterSpacing: -0.2,
+                        )),
+                    Text(
+                      tiene
+                          ? 'Tu tienda es visible en la Red Nexora'
+                          : 'Aún no has marcado tu tienda',
+                      style: TextStyle(
+                          fontSize: 11, color: p.textMuted),
+                    ),
+                  ],
+                ),
+              ),
               if (tiene)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -1584,104 +1912,30 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                     color: _C.success.withOpacity(.14),
                     borderRadius: BorderRadius.circular(20),
                   ),
-                  child: const Text('LISTA',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w900,
-                        color: _C.success,
-                      )),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.check_circle_rounded,
+                          size: 10, color: _C.success),
+                      SizedBox(width: 3),
+                      Text('LISTA',
+                          style: TextStyle(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                            color: _C.success,
+                            letterSpacing: 0.4,
+                          )),
+                    ],
+                  ),
                 ),
             ],
           ),
           const SizedBox(height: 14),
           if (tiene)
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              child: SizedBox(
-                height: 180,
-                child: Stack(
-                  children: [
-                    FlutterMap(
-                      options: MapOptions(
-                        initialCenter:
-                            LatLng(t.latitud!, t.longitud!),
-                        initialZoom: 15,
-                        interactionOptions:
-                            const InteractionOptions(
-                          flags: InteractiveFlag.none,
-                        ),
-                      ),
-                      children: [
-                        TileLayer(
-                          urlTemplate:
-                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                          userAgentPackageName:
-                              'com.nexorabusiness.app',
-                        ),
-                        MarkerLayer(markers: [
-                          Marker(
-                            point:
-                                LatLng(t.latitud!, t.longitud!),
-                            width: 40, height: 40,
-                            child: Container(
-                              decoration: BoxDecoration(
-                                gradient: const LinearGradient(
-                                    colors: _C.gradBrand),
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                    color: Colors.white, width: 2.5),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: _C.primary.withOpacity(.5),
-                                    blurRadius: 10,
-                                    offset: const Offset(0, 4),
-                                  ),
-                                ],
-                              ),
-                              child: const Icon(
-                                  Icons.storefront_rounded,
-                                  color: Colors.white, size: 18),
-                            ),
-                          ),
-                        ]),
-                      ],
-                    ),
-                    Positioned(
-                      top: 8, right: 8,
-                      child: Material(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(10),
-                          onTap: _verEnMapa,
-                          child: const Padding(
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 10, vertical: 6),
-                            child: Row(
-                              children: [
-                                Icon(Icons.open_in_full_rounded,
-                                    size: 14, color: _C.primary),
-                                SizedBox(width: 5),
-                                Text('Ampliar',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w800,
-                                      color: _C.primary,
-                                    )),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
+            _miniMapa(t, p)
           else
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 14, vertical: 20),
+              padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
                 color: p.surface2,
                 borderRadius: BorderRadius.circular(14),
@@ -1689,16 +1943,22 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.location_off_rounded,
-                      color: _C.warning, size: 28),
+                  Container(
+                    width: 44, height: 44,
+                    decoration: BoxDecoration(
+                      color: _C.warning.withOpacity(.14),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.location_off_rounded,
+                        color: _C.warning, size: 22),
+                  ),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Aún no has marcado tu tienda en el mapa. '
-                      'Los clientes no podrán verla ni saber cómo llegar.',
+                      'Los clientes no podrán ver tu tienda en el mapa hasta que marques tu ubicación.',
                       style: TextStyle(
-                        fontSize: 12.5,
-                        height: 1.4,
+                        fontSize: 12,
+                        height: 1.45,
                         color: p.textMid,
                       ),
                     ),
@@ -1706,26 +1966,6 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                 ],
               ),
             ),
-          if (tiene) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Icon(Icons.pin_drop_rounded,
-                    size: 14, color: p.textMuted),
-                const SizedBox(width: 4),
-                Text(
-                  '${t.latitud!.toStringAsFixed(5)}, '
-                  '${t.longitud!.toStringAsFixed(5)}',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w700,
-                    color: p.textMuted,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ],
           const SizedBox(height: 14),
           Wrap(
             spacing: 8, runSpacing: 8,
@@ -1733,17 +1973,26 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
               _btnAccion(
                 icon: Icons.my_location_rounded,
                 label: _obteniendoUbicacion
-                    ? 'Obteniendo…' : 'Usar mi ubicación',
+                    ? 'Obteniendo…' : 'Usar GPS',
                 color: _C.primary,
-                onTap: _obteniendoUbicacion ? null : _usarMiUbicacion,
+                onTap:
+                    _obteniendoUbicacion ? null : _usarMiUbicacion,
                 cargando: _obteniendoUbicacion,
               ),
               _btnAccion(
                 icon: Icons.edit_location_alt_rounded,
-                label: tiene ? 'Ajustar en mapa' : 'Marcar en mapa',
+                label:
+                    tiene ? 'Ajustar en mapa' : 'Marcar en mapa',
                 color: _C.info,
                 onTap: _abrirSelectorEnMapa,
               ),
+              if (tiene)
+                _btnAccion(
+                  icon: Icons.open_in_full_rounded,
+                  label: 'Ampliar',
+                  color: _C.purple,
+                  onTap: _verEnMapa,
+                ),
               if (tiene)
                 _btnAccion(
                   icon: Icons.directions_rounded,
@@ -1761,6 +2010,131 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _miniMapa(TiendaPublica t, _P p) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: SizedBox(
+        height: 180,
+        child: Stack(
+          children: [
+            FlutterMap(
+              options: MapOptions(
+                initialCenter:
+                    LatLng(t.latitud!, t.longitud!),
+                initialZoom: 15,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.none,
+                ),
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate:
+                      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.nexorabusiness.app',
+                ),
+                MarkerLayer(markers: [
+                  Marker(
+                    point: LatLng(t.latitud!, t.longitud!),
+                    width: 44, height: 44,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                            colors: _C.gradBrand),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                            color: Colors.white, width: 3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _C.primary.withOpacity(.5),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(Icons.storefront_rounded,
+                          color: Colors.white, size: 20),
+                    ),
+                  ),
+                ]),
+              ],
+            ),
+            Positioned(
+              left: 0, right: 0, bottom: 0,
+              child: Container(
+                height: 50,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.transparent,
+                      Colors.black.withOpacity(.55),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              left: 10, bottom: 10,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black.withOpacity(.65),
+                  borderRadius: BorderRadius.circular(7),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.pin_drop_rounded,
+                        size: 11, color: Colors.white),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${t.latitud!.toStringAsFixed(4)}, ${t.longitud!.toStringAsFixed(4)}',
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              top: 10, right: 10,
+              child: Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(9),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(9),
+                  onTap: _verEnMapa,
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.open_in_full_rounded,
+                            size: 13, color: _C.primary),
+                        SizedBox(width: 4),
+                        Text('Ver',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: _C.primary,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1792,15 +2166,14 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                 SizedBox(
                   width: 14, height: 14,
                   child: CircularProgressIndicator(
-                    strokeWidth: 2, color: color,
-                  ),
+                      strokeWidth: 2, color: color),
                 )
               else
-                Icon(icon, size: 15, color: color),
-              const SizedBox(width: 7),
+                Icon(icon, size: 14, color: color),
+              const SizedBox(width: 6),
               Text(label,
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w800,
                     color: color,
                   )),
@@ -1811,162 +2184,187 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
     );
   }
 
-  Widget _seccionInfo(AppProvider provider, _P p, bool isDesktop) {
-    return _card(
-      p,
-      title: 'Información general',
-      icon: Icons.info_rounded,
-      color: _C.primary,
-      child: Column(
-        children: [
-          _campo(p,
-              label: 'Nombre de la tienda',
-              icon: Icons.storefront_rounded,
-              controller: _nombreCtrl,
-              readOnly: !_editando),
-          const SizedBox(height: 12),
-          _campo(p,
-              label: 'Descripción',
-              icon: Icons.notes_rounded,
-              controller: _descripcionCtrl,
-              readOnly: !_editando,
-              maxLines: 3),
-        ],
-      ),
-      accion: _editando ? _botonesGuardar(p) : null,
-    );
-  }
-
-  Widget _botonesGuardar(_P p) {
-    return Row(
-      children: [
-        Expanded(
-          child: TextButton(
-            onPressed: () {
-              setState(() {
-                _editando = false;
-                if (_tienda != null) {
-                  _sincronizarControllers(_tienda!);
-                }
-              });
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: p.textMid,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(11),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-            child: const Text('Cancelar',
-                style: TextStyle(fontWeight: FontWeight.w800)),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Expanded(
-          flex: 2,
-          child: ElevatedButton.icon(
-            onPressed: _guardando ? null : _guardar,
-            icon: _guardando
-                ? const SizedBox(
-                    width: 15, height: 15,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.save_rounded, size: 16),
-            label: Text(_guardando ? 'Guardando…' : 'Guardar'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _C.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(11),
-              ),
-              padding: const EdgeInsets.symmetric(vertical: 12),
-              elevation: 0,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _seccionContacto(_P p, bool isDesktop) {
-    return _card(
-      p,
-      title: 'Contacto',
-      icon: Icons.contact_mail_rounded,
-      color: _C.cyan,
-      child: Column(
-        children: [
-          _campo(p,
-              label: 'Teléfono',
-              icon: Icons.phone_rounded,
-              controller: _telefonoCtrl,
-              readOnly: !_editando,
-              keyboardType: TextInputType.phone),
-          const SizedBox(height: 12),
-          _campo(p,
-              label: 'WhatsApp',
-              icon: Icons.chat_rounded,
-              controller: _whatsappCtrl,
-              readOnly: !_editando,
-              keyboardType: TextInputType.phone),
-          const SizedBox(height: 12),
-          _campo(p,
-              label: 'Email',
-              icon: Icons.email_rounded,
-              controller: _emailCtrl,
-              readOnly: !_editando,
-              keyboardType: TextInputType.emailAddress),
-          const SizedBox(height: 12),
-          _campo(p,
-              label: 'Dirección',
-              icon: Icons.location_on_rounded,
-              controller: _direccionCtrl,
-              readOnly: !_editando),
-          const SizedBox(height: 12),
-          _campo(p,
-              label: 'Horario de atención',
-              icon: Icons.schedule_rounded,
-              controller: _horarioCtrl,
-              readOnly: !_editando),
-        ],
-      ),
-    );
-  }
-
-  Widget _card(_P p,
-      {required String title,
-      required IconData icon,
-      required Color color,
-      required Widget child,
-      Widget? accion}) {
+  // ══════════════════════════════════════════════════════════
+  //  INFO
+  // ══════════════════════════════════════════════════════════
+  Widget _seccionInfo(AppProvider provider, _P p) {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          _sectionHeader(
+            p,
+            icon: Icons.info_rounded,
+            color: _C.primary,
+            title: 'Información general',
+            subtitle: _editando
+                ? 'Modo edición'
+                : 'Nombre y descripción',
+            action: !_editando
+                ? _editChip(p, () => setState(() => _editando = true))
+                : null,
+          ),
+          const SizedBox(height: 16),
+          if (_editando) ...[
+            _editableField(p,
+                label: 'Nombre de la tienda',
+                icon: Icons.storefront_rounded,
+                controller: _nombreCtrl),
+            const SizedBox(height: 12),
+            _editableField(p,
+                label: 'Descripción',
+                icon: Icons.notes_rounded,
+                controller: _descripcionCtrl,
+                maxLines: 3),
+          ] else ...[
+            _readOnlyItem(
+              p,
+              label: 'Nombre',
+              value: _tienda!.nombre,
+              icon: Icons.storefront_rounded,
+            ),
+            const SizedBox(height: 10),
+            _readOnlyItem(
+              p,
+              label: 'Descripción',
+              value: _tienda!.descripcion.isEmpty
+                  ? 'Sin descripción'
+                  : _tienda!.descripcion,
+              icon: Icons.notes_rounded,
+              empty: _tienda!.descripcion.isEmpty,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  CONTACTO
+  // ══════════════════════════════════════════════════════════
+  Widget _seccionContacto(_P p) {
+    final t = _tienda!;
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: p.surface,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: p.border, width: 1.2),
+        boxShadow: p.shadowSm,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _sectionHeader(
+            p,
+            icon: Icons.contact_mail_rounded,
+            color: _C.cyan,
+            title: 'Datos de contacto',
+            subtitle: 'Cómo te contactan los clientes',
+          ),
+          const SizedBox(height: 16),
+          if (_editando) ...[
+            _editableField(p,
+                label: 'Teléfono',
+                icon: Icons.phone_rounded,
+                controller: _telefonoCtrl,
+                keyboardType: TextInputType.phone),
+            const SizedBox(height: 12),
+            _editableField(p,
+                label: 'WhatsApp',
+                icon: Icons.chat_rounded,
+                controller: _whatsappCtrl,
+                keyboardType: TextInputType.phone),
+            const SizedBox(height: 12),
+            _editableField(p,
+                label: 'Email',
+                icon: Icons.email_rounded,
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress),
+            const SizedBox(height: 12),
+            _editableField(p,
+                label: 'Dirección',
+                icon: Icons.location_on_rounded,
+                controller: _direccionCtrl),
+            const SizedBox(height: 12),
+            _editableField(p,
+                label: 'Horario',
+                icon: Icons.schedule_rounded,
+                controller: _horarioCtrl),
+          ] else ...[
+            _readOnlyItem(p,
+                label: 'Teléfono',
+                value: t.telefono ?? 'No configurado',
+                icon: Icons.phone_rounded,
+                empty: t.telefono == null),
+            const SizedBox(height: 10),
+            _readOnlyItem(p,
+                label: 'WhatsApp',
+                value: t.whatsapp ?? 'No configurado',
+                icon: Icons.chat_rounded,
+                empty: t.whatsapp == null),
+            const SizedBox(height: 10),
+            _readOnlyItem(p,
+                label: 'Email',
+                value: t.email ?? 'No configurado',
+                icon: Icons.email_rounded,
+                empty: t.email == null),
+            const SizedBox(height: 10),
+            _readOnlyItem(p,
+                label: 'Dirección',
+                value: t.direccion ?? 'No configurada',
+                icon: Icons.location_on_rounded,
+                empty: t.direccion == null),
+            const SizedBox(height: 10),
+            _readOnlyItem(p,
+                label: 'Horario',
+                value: t.horario ?? 'No configurado',
+                icon: Icons.schedule_rounded,
+                empty: t.horario == null),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  //  HELPERS UI
+  // ══════════════════════════════════════════════════════════
+  Widget _sectionHeader(
+    _P p, {
+    required IconData icon,
+    required Color color,
+    required String title,
+    required String subtitle,
+    Widget? action,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 34, height: 34,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              color.withOpacity(.22),
+              color.withOpacity(.06),
+            ]),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: color.withOpacity(.24)),
+          ),
+          child: Icon(icon, color: color, size: 16),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 34, height: 34,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: [
-                    color.withOpacity(.22),
-                    color.withOpacity(.06),
-                  ]),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: color.withOpacity(.24)),
-                ),
-                child: Icon(icon, color: color, size: 16),
-              ),
-              const SizedBox(width: 10),
               Text(title,
                   style: TextStyle(
                     fontSize: 14.5,
@@ -1974,44 +2372,124 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
                     color: p.textHigh,
                     letterSpacing: -0.2,
                   )),
+              Text(subtitle,
+                  style: TextStyle(
+                      fontSize: 11, color: p.textMuted)),
             ],
           ),
-          const SizedBox(height: 16),
-          child,
-          if (accion != null) ...[
-            const SizedBox(height: 16),
-            accion,
-          ],
+        ),
+        if (action != null) action,
+      ],
+    );
+  }
+
+  Widget _editChip(_P p, VoidCallback onTap) {
+    return Material(
+      color: _C.primary.withOpacity(p.dark ? .14 : .08),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: _C.primary.withOpacity(.28)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.edit_rounded, size: 12, color: _C.primary),
+              SizedBox(width: 5),
+              Text('Editar',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: _C.primary,
+                  )),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _readOnlyItem(
+    _P p, {
+    required String label,
+    required String value,
+    required IconData icon,
+    bool empty = false,
+  }) {
+    return Container(
+      padding:
+          const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: p.surface2,
+        borderRadius: BorderRadius.circular(11),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 16, color: p.textMuted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: p.textMuted,
+                      letterSpacing: 0.3,
+                    )),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: empty ? p.textMuted : p.textHigh,
+                    fontStyle:
+                        empty ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
-  Widget _campo(_P p,
-      {required String label,
-      required IconData icon,
-      required TextEditingController controller,
-      bool readOnly = false,
-      int maxLines = 1,
-      TextInputType? keyboardType}) {
+  Widget _editableField(
+    _P p, {
+    required String label,
+    required IconData icon,
+    required TextEditingController controller,
+    int maxLines = 1,
+    TextInputType? keyboardType,
+  }) {
     return TextField(
       controller: controller,
-      readOnly: readOnly,
       maxLines: maxLines,
       keyboardType: keyboardType,
       style: TextStyle(
         fontSize: 13.5,
         fontWeight: FontWeight.w600,
-        color: readOnly ? p.textMid : p.textHigh,
+        color: p.textHigh,
       ),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: TextStyle(
-          fontSize: 12, color: p.textMuted, fontWeight: FontWeight.w600,
-        ),
+            fontSize: 12,
+            color: p.textMuted,
+            fontWeight: FontWeight.w600),
         prefixIcon: Icon(icon, size: 17, color: p.textMuted),
         filled: true,
-        fillColor: readOnly ? p.surface2 : p.surface,
+        fillColor: p.surface2,
         contentPadding:
             const EdgeInsets.symmetric(horizontal: 13, vertical: 13),
         enabledBorder: OutlineInputBorder(
@@ -2022,6 +2500,92 @@ class _MiTiendaScreenState extends State<MiTiendaScreen> {
           borderRadius: BorderRadius.circular(12),
           borderSide:
               const BorderSide(color: _C.primary, width: 1.5),
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomSaveBar(_P p) {
+    return Positioned(
+      bottom: 0, left: 0, right: 0,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        decoration: BoxDecoration(
+          color: p.surface,
+          border: Border(top: BorderSide(color: p.border, width: 1)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(.08),
+              blurRadius: 22,
+              offset: const Offset(0, -6),
+            ),
+          ],
+        ),
+        child: SafeArea(
+          top: false,
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _guardando
+                      ? null
+                      : () {
+                          setState(() {
+                            _editando = false;
+                            if (_tienda != null) {
+                              _sincronizarControllers(_tienda!);
+                            }
+                          });
+                        },
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: p.textMid,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 14),
+                    side: BorderSide(color: p.border),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text('Cancelar',
+                      style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 2,
+                child: ElevatedButton.icon(
+                  onPressed: _guardando ? null : _guardar,
+                  icon: _guardando
+                      ? const SizedBox(
+                          width: 16, height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white,
+                          ),
+                        )
+                      : const Icon(Icons.check_rounded, size: 18),
+                  label: Text(
+                      _guardando
+                          ? 'Guardando…'
+                          : 'Guardar cambios',
+                      style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _C.success,
+                    foregroundColor: Colors.white,
+                    padding:
+                        const EdgeInsets.symmetric(vertical: 14),
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2119,11 +2683,13 @@ class _SelectorUbicacionScreenState
         actions: [
           IconButton(
             tooltip: 'Mi ubicación',
-            onPressed: _cargandoUbicacion ? null : _usarMiUbicacion,
+            onPressed:
+                _cargandoUbicacion ? null : _usarMiUbicacion,
             icon: _cargandoUbicacion
                 ? const SizedBox(
                     width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child:
+                        CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.my_location_rounded),
           ),
@@ -2136,9 +2702,7 @@ class _SelectorUbicacionScreenState
             options: MapOptions(
               initialCenter: _centro,
               initialZoom: 16,
-              onTap: (_, point) {
-                setState(() => _centro = point);
-              },
+              onTap: (_, point) => setState(() => _centro = point),
             ),
             children: [
               TileLayer(
@@ -2170,10 +2734,12 @@ class _SelectorUbicacionScreenState
                             ),
                           ],
                         ),
-                        child: const Icon(Icons.storefront_rounded,
+                        child: const Icon(
+                            Icons.storefront_rounded,
                             color: Colors.white, size: 20),
                       ),
-                      Container(width: 3, height: 10, color: _C.primary),
+                      Container(
+                          width: 3, height: 10, color: _C.primary),
                     ],
                   ),
                 ),
@@ -2202,7 +2768,8 @@ class _SelectorUbicacionScreenState
                       size: 18, color: _C.primary),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text('Toca el mapa para mover el marcador',
+                    child: Text(
+                        'Toca el mapa para mover el marcador',
                         style: TextStyle(
                           fontSize: 12.5,
                           fontWeight: FontWeight.w700,
@@ -2223,8 +2790,8 @@ class _SelectorUbicacionScreenState
                       onPressed: () => Navigator.pop(context),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: p.textMid,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 15),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 15),
                         side: BorderSide(color: p.border),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
@@ -2232,8 +2799,8 @@ class _SelectorUbicacionScreenState
                         backgroundColor: p.surface,
                       ),
                       child: const Text('Cancelar',
-                          style:
-                              TextStyle(fontWeight: FontWeight.w800)),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800)),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -2242,13 +2809,14 @@ class _SelectorUbicacionScreenState
                     child: ElevatedButton.icon(
                       onPressed: () =>
                           Navigator.pop(context, _centro),
-                      icon: const Icon(Icons.check_rounded, size: 18),
+                      icon: const Icon(Icons.check_rounded,
+                          size: 18),
                       label: const Text('Confirmar ubicación'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: _C.primary,
                         foregroundColor: Colors.white,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 15),
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 15),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(14),
                         ),

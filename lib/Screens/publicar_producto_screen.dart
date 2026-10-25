@@ -1,9 +1,7 @@
 // ============================================================
 //  publicar_producto_screen.dart  ·  NEXORA BUSINESS
-//  Selección y publicación de productos a la tienda pública
-//  Claves namespaced por empresa
+//  Publicación premium con selección masiva
 // ============================================================
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../main.dart';
@@ -14,9 +12,6 @@ import 'mi_tienda_screen.dart'
     show keyTiendaDeEmpresa, kNetworkStoresKey;
 import 'servicio_cancelado_screen.dart';
 
-// ════════════════════════════════════════════════════════════
-//  PALETA
-// ════════════════════════════════════════════════════════════
 class _C {
   static const primary   = Color(0xFF1A5CFF);
   static const cyan      = Color(0xFF06B6D4);
@@ -25,7 +20,6 @@ class _C {
   static const danger    = Color(0xFFEF4444);
   static const info      = Color(0xFF3B82F6);
   static const purple    = Color(0xFF8B5CF6);
-
   static const gradBrand = [Color(0xFF1A5CFF), Color(0xFF06B6D4)];
 }
 
@@ -40,12 +34,14 @@ class _P {
   Color get textMuted   => dark ? const Color(0xFF7D95B6) : const Color(0xFF607B9E);
   Color get border      => dark ? const Color(0x291A5CFF) : const Color(0x141A5CFF);
   List<BoxShadow> get shadowSm => [
-    BoxShadow(
-      color: dark ? Colors.black.withOpacity(.30)
-          : const Color(0xFF0A1A33).withOpacity(.05),
-      blurRadius: 16, offset: const Offset(0, 4),
-    ),
-  ];
+        BoxShadow(
+          color: dark
+              ? Colors.black.withOpacity(.30)
+              : const Color(0xFF0A1A33).withOpacity(.05),
+          blurRadius: 16,
+          offset: const Offset(0, 4),
+        ),
+      ];
 }
 
 class PublicarProductoScreen extends StatefulWidget {
@@ -63,6 +59,7 @@ class _PublicarProductoScreenState
   bool _cargando = true;
   bool _guardando = false;
   String _busqueda = '';
+  String? _catSel;
   final _searchCtrl = TextEditingController();
 
   @override
@@ -89,7 +86,8 @@ class _PublicarProductoScreenState
     TiendaPublica? t;
     final raw = provider.catalogosBox.get(key);
     if (raw is Map) {
-      final temp = TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
+      final temp =
+          TiendaPublica.fromJson(Map<String, dynamic>.from(raw));
       if (temp.empresaId == empresaId) t = temp;
     } else {
       t = TiendaPublica.porDefecto(
@@ -106,9 +104,6 @@ class _PublicarProductoScreenState
     });
   }
 
-  // ══════════════════════════════════════════════════════════
-  //  PUBLICAR
-  // ══════════════════════════════════════════════════════════
   Future<void> _publicar() async {
     if (_tienda == null || _seleccionados.isEmpty) return;
     final provider = Provider.of<AppProvider>(context, listen: false);
@@ -122,7 +117,6 @@ class _PublicarProductoScreenState
         if (!lista.contains(id)) lista.add(id);
       }
 
-      // Reconstruir catálogo completo con todos los IDs publicados
       final catalogo = _buildCatalogo(provider, lista);
 
       final nueva = _tienda!.copyWith(
@@ -131,13 +125,12 @@ class _PublicarProductoScreenState
         updatedAt: DateTime.now(),
       );
 
-      // Local namespaced
       await provider.catalogosBox.put(
           keyTiendaDeEmpresa(empresaId), nueva.toJson());
 
-      // Red local
       final netRaw =
-          (provider.catalogosBox.get(kNetworkStoresKey) as List?) ?? [];
+          (provider.catalogosBox.get(kNetworkStoresKey) as List?) ??
+              [];
       final netList =
           netRaw.map((e) => Map<String, dynamic>.from(e)).toList();
       final idx =
@@ -149,7 +142,6 @@ class _PublicarProductoScreenState
       }
       await provider.catalogosBox.put(kNetworkStoresKey, netList);
 
-      // Supabase (para que otros dispositivos lo vean)
       if (provider.isOnline) {
         try {
           await provider.publicarTiendaEnRed(
@@ -164,12 +156,11 @@ class _PublicarProductoScreenState
             categoriaId: nueva.categoriaId,
             latitud: nueva.latitud,
             longitud: nueva.longitud,
-            catalogo: nueva.catalogo.map((p) => p.toJson()).toList(),
+            catalogo:
+                nueva.catalogo.map((p) => p.toJson()).toList(),
             activa: nueva.activa,
           );
-        } catch (e) {
-          print('⚠️ Error publicando en Supabase: $e');
-        }
+        } catch (_) {}
       }
 
       if (!mounted) return;
@@ -190,7 +181,6 @@ class _PublicarProductoScreenState
     }
   }
 
-  /// Construye el catálogo público desde el inventario real
   List<ProductoPublicado> _buildCatalogo(
       AppProvider provider, List<String> ids) {
     final result = <ProductoPublicado>[];
@@ -240,7 +230,14 @@ class _PublicarProductoScreenState
         .where((prod) => !yaPublicados.contains(prod.id))
         .toList();
 
-    final filtrados = disponibles.where((prod) {
+    final cats = <String>{};
+    for (final prod in disponibles) {
+      final c = provider.getNombreCategoria(prod.categoriaId);
+      if (c.isNotEmpty && c != 'Sin categoría') cats.add(c);
+    }
+    final catList = cats.toList()..sort();
+
+    var filtrados = disponibles.where((prod) {
       if (_busqueda.isEmpty) return true;
       final q = _busqueda.toLowerCase();
       return prod.nombre.toLowerCase().contains(q) ||
@@ -251,71 +248,77 @@ class _PublicarProductoScreenState
               .contains(q);
     }).toList();
 
+    if (_catSel != null) {
+      filtrados = filtrados
+          .where((prod) =>
+              provider.getNombreCategoria(prod.categoriaId) ==
+              _catSel)
+          .toList();
+    }
+
     return Scaffold(
       backgroundColor: p.bg,
       appBar: _appBar(p),
-      body: Stack(
+      body: Column(
         children: [
-          _background(p),
-          Column(
-            children: [
-              Padding(
-                padding: EdgeInsets.fromLTRB(
-                    isDesktop ? 24 : 14, 14, isDesktop ? 24 : 14, 10),
-                child: Column(
-                  children: [
-                    _infoCard(disponibles.length, p),
-                    const SizedBox(height: 12),
-                    _searchBar(p),
-                    const SizedBox(height: 10),
-                    _contadorSeleccion(p),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: filtrados.isEmpty
-                    ? _emptyState(disponibles.isEmpty, p)
-                    : GridView.builder(
-                        padding: EdgeInsets.fromLTRB(
-                            isDesktop ? 24 : 14, 4,
-                            isDesktop ? 24 : 14, 100),
-                        gridDelegate:
-                            const SliverGridDelegateWithMaxCrossAxisExtent(
-                          maxCrossAxisExtent: 240,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.85,
-                        ),
-                        itemCount: filtrados.length,
-                        itemBuilder: (_, i) => _productoSelectable(
-                            filtrados[i], provider, p),
-                      ),
-              ),
-            ],
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+                isDesktop ? 20 : 14, 14, isDesktop ? 20 : 14, 0),
+            child: Column(
+              children: [
+                _infoCard(disponibles.length, p),
+                const SizedBox(height: 12),
+                _searchBar(p),
+                const SizedBox(height: 12),
+                if (catList.isNotEmpty)
+                  SizedBox(
+                    height: 34,
+                    child: ListView(
+                      scrollDirection: Axis.horizontal,
+                      physics: const BouncingScrollPhysics(),
+                      children: [
+                        _catChip(p, 'Todas', _catSel == null,
+                            () => setState(() => _catSel = null)),
+                        ...catList.map((c) => Padding(
+                              padding:
+                                  const EdgeInsets.only(left: 8),
+                              child: _catChip(p, c, _catSel == c,
+                                  () => setState(() => _catSel = c)),
+                            )),
+                      ],
+                    ),
+                  ),
+                const SizedBox(height: 12),
+                if (disponibles.isNotEmpty)
+                  _seleccionMasivaRow(filtrados, p),
+              ],
+            ),
+          ),
+          Expanded(
+            child: filtrados.isEmpty
+                ? _emptyState(disponibles.isEmpty, p)
+                : GridView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                        isDesktop ? 20 : 14,
+                        12,
+                        isDesktop ? 20 : 14,
+                        _seleccionados.isEmpty ? 20 : 100),
+                    gridDelegate:
+                        const SliverGridDelegateWithMaxCrossAxisExtent(
+                      maxCrossAxisExtent: 220,
+                      crossAxisSpacing: 12,
+                      mainAxisSpacing: 12,
+                      childAspectRatio: 0.82,
+                    ),
+                    itemCount: filtrados.length,
+                    itemBuilder: (_, i) => _productoSelectable(
+                        filtrados[i], provider, p),
+                  ),
           ),
         ],
       ),
       bottomNavigationBar:
-          _seleccionados.isEmpty ? null : _bottomBar(p),
-    );
-  }
-
-  Widget _background(_P p) {
-    return Positioned.fill(
-      child: IgnorePointer(
-        child: Stack(
-          children: [
-            Positioned(
-              top: -180, right: -160,
-              child: _orb(420, _C.primary.withOpacity(p.dark ? .12 : .07)),
-            ),
-            Positioned(
-              bottom: -220, left: -140,
-              child: _orb(440, _C.cyan.withOpacity(p.dark ? .10 : .06)),
-            ),
-          ],
-        ),
-      ),
+          _seleccionados.isEmpty ? null : _bottomBar(p, provider),
     );
   }
 
@@ -329,7 +332,8 @@ class _PublicarProductoScreenState
       title: Row(
         children: [
           Container(
-            width: 36, height: 36,
+            width: 36,
+            height: 36,
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: _C.gradBrand),
               borderRadius: BorderRadius.circular(11),
@@ -349,13 +353,13 @@ class _PublicarProductoScreenState
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Publicar',
+              const Text('Publicar productos',
                   style: TextStyle(
-                    fontSize: 17,
+                    fontSize: 16.5,
                     fontWeight: FontWeight.w900,
                     letterSpacing: -0.3,
                   )),
-              Text('Añade productos a tu tienda',
+              Text('Añade a tu tienda pública',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w500,
@@ -370,51 +374,60 @@ class _PublicarProductoScreenState
 
   Widget _infoCard(int disponibles, _P p) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: [
-            _C.primary.withOpacity(p.dark ? .12 : .06),
-            _C.cyan.withOpacity(p.dark ? .06 : .03),
+            _C.primary.withOpacity(p.dark ? .22 : .12),
+            _C.cyan.withOpacity(p.dark ? .10 : .05),
           ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
         ),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _C.primary.withOpacity(.24)),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+            color: _C.primary.withOpacity(p.dark ? .35 : .24)),
       ),
       child: Row(
         children: [
           Container(
-            width: 40, height: 40,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
               gradient: const LinearGradient(colors: _C.gradBrand),
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               boxShadow: [
                 BoxShadow(
-                  color: _C.primary.withOpacity(.32),
-                  blurRadius: 12,
-                  offset: const Offset(0, 4),
+                  color: _C.primary.withOpacity(.42),
+                  blurRadius: 14,
+                  offset: const Offset(0, 5),
                 ),
               ],
             ),
-            child: const Icon(Icons.info_outline_rounded,
-                color: Colors.white, size: 19),
+            child: const Icon(Icons.tips_and_updates_rounded,
+                color: Colors.white, size: 22),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Toca los productos que quieras publicar',
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w900,
-                      color: p.textHigh,
-                    )),
-                const SizedBox(height: 2),
                 Text(
-                  '$disponibles producto${disponibles == 1 ? '' : 's'} disponible${disponibles == 1 ? '' : 's'}',
+                  'Selecciona los productos a publicar',
                   style: TextStyle(
-                    fontSize: 11,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                    color: p.textHigh,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  disponibles == 0
+                      ? 'Todo tu inventario ya está publicado'
+                      : '$disponibles producto${disponibles == 1 ? '' : 's'} disponible${disponibles == 1 ? '' : 's'}',
+                  style: TextStyle(
+                    fontSize: 11.5,
                     fontWeight: FontWeight.w600,
                     color: p.textMuted,
                   ),
@@ -433,23 +446,23 @@ class _PublicarProductoScreenState
       decoration: BoxDecoration(
         color: p.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: p.border),
+        border: Border.all(color: p.border, width: 1.2),
         boxShadow: p.shadowSm,
       ),
       child: TextField(
         controller: _searchCtrl,
         onChanged: (v) => setState(() => _busqueda = v),
         style: TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w500,
-          color: p.textHigh,
-        ),
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: p.textHigh),
         decoration: InputDecoration(
           border: InputBorder.none,
           hintText: 'Buscar producto…',
-          hintStyle: TextStyle(fontSize: 13.5, color: p.textMuted),
-          prefixIcon:
-              Icon(Icons.search_rounded, size: 20, color: p.textMuted),
+          hintStyle:
+              TextStyle(fontSize: 13.5, color: p.textMuted),
+          prefixIcon: Icon(Icons.search_rounded,
+              size: 20, color: p.textMuted),
           suffixIcon: _busqueda.isNotEmpty
               ? IconButton(
                   icon: Icon(Icons.close_rounded,
@@ -465,33 +478,139 @@ class _PublicarProductoScreenState
     );
   }
 
-  Widget _contadorSeleccion(_P p) {
-    if (_seleccionados.isEmpty) return const SizedBox.shrink();
+  Widget _catChip(
+      _P p, String label, bool selected, VoidCallback onTap) {
+    return Material(
+      color: selected ? Colors.transparent : p.surface,
+      borderRadius: BorderRadius.circular(11),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(11),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(colors: _C.gradBrand)
+                : null,
+            borderRadius: BorderRadius.circular(11),
+            border: Border.all(
+                color: selected ? Colors.transparent : p.border),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: _C.primary.withOpacity(.28),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected
+                    ? FontWeight.w900
+                    : FontWeight.w600,
+                color: selected ? Colors.white : p.textMid,
+              )),
+        ),
+      ),
+    );
+  }
+
+  Widget _seleccionMasivaRow(
+      List<Producto> visibles, _P p) {
+    final todosVisiblesSeleccionados = visibles.isNotEmpty &&
+        visibles.every((prod) => _seleccionados.contains(prod.id));
+
     return Row(
       children: [
-        const Icon(Icons.check_circle_rounded,
-            size: 16, color: _C.success),
-        const SizedBox(width: 6),
-        Text(
-          '${_seleccionados.length} seleccionado${_seleccionados.length == 1 ? '' : 's'}',
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
-            color: p.textMid,
+        if (_seleccionados.isNotEmpty) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: _C.success.withOpacity(p.dark ? .18 : .10),
+              borderRadius: BorderRadius.circular(9),
+              border:
+                  Border.all(color: _C.success.withOpacity(.30)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.check_circle_rounded,
+                    size: 13, color: _C.success),
+                const SizedBox(width: 5),
+                Text(
+                  '${_seleccionados.length} seleccionado${_seleccionados.length == 1 ? '' : 's'}',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: _C.success,
+                  ),
+                ),
+              ],
+            ),
           ),
-        ),
-        const Spacer(),
-        TextButton(
-          onPressed: () => setState(() => _seleccionados.clear()),
-          style: TextButton.styleFrom(
-            foregroundColor: _C.danger,
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            minimumSize: const Size(0, 32),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () =>
+                setState(() => _seleccionados.clear()),
+            icon: const Icon(Icons.close_rounded, size: 15),
+            label: const Text('Limpiar'),
+            style: TextButton.styleFrom(
+              foregroundColor: _C.danger,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              textStyle: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w800),
+            ),
           ),
-          child: const Text('Limpiar',
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w800)),
-        ),
+        ] else ...[
+          Text(
+            '${visibles.length} visible${visibles.length == 1 ? '' : 's'}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: p.textMuted,
+            ),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                if (todosVisiblesSeleccionados) {
+                  for (final prod in visibles) {
+                    _seleccionados.remove(prod.id);
+                  }
+                } else {
+                  for (final prod in visibles) {
+                    _seleccionados.add(prod.id);
+                  }
+                }
+              });
+            },
+            icon: Icon(
+              todosVisiblesSeleccionados
+                  ? Icons.check_box_rounded
+                  : Icons.check_box_outline_blank_rounded,
+              size: 15,
+            ),
+            label: Text(todosVisiblesSeleccionados
+                ? 'Deseleccionar todos'
+                : 'Seleccionar todos'),
+            style: TextButton.styleFrom(
+              foregroundColor: _C.primary,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              textStyle: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -522,14 +641,14 @@ class _PublicarProductoScreenState
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: selected ? _C.primary : p.border,
-              width: selected ? 1.8 : 1.2,
+              width: selected ? 2 : 1.2,
             ),
             boxShadow: selected
                 ? [
                     BoxShadow(
-                      color: _C.primary.withOpacity(.22),
-                      blurRadius: 18,
-                      offset: const Offset(0, 6),
+                      color: _C.primary.withOpacity(.28),
+                      blurRadius: 20,
+                      offset: const Offset(0, 8),
                     ),
                   ]
                 : p.shadowSm,
@@ -565,31 +684,34 @@ class _PublicarProductoScreenState
                     ),
                     if (selected)
                       Positioned(
-                        top: 8, right: 8,
+                        top: 8,
+                        right: 8,
                         child: Container(
-                          width: 26, height: 26,
+                          width: 28,
+                          height: 28,
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(
                                 colors: _C.gradBrand),
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: _C.primary.withOpacity(.42),
-                                blurRadius: 8,
-                                offset: const Offset(0, 3),
+                                color: _C.primary.withOpacity(.5),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
                               ),
                             ],
                           ),
                           child: const Icon(Icons.check_rounded,
-                              color: Colors.white, size: 16),
+                              color: Colors.white, size: 18),
                         ),
                       ),
                     if (sinStock)
                       Positioned(
-                        bottom: 8, left: 8,
+                        bottom: 8,
+                        left: 8,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 3),
+                              horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
                             gradient: const LinearGradient(colors: [
                               _C.danger,
@@ -612,9 +734,11 @@ class _PublicarProductoScreenState
               Expanded(
                 flex: 45,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                  padding:
+                      const EdgeInsets.fromLTRB(10, 8, 10, 8),
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                    crossAxisAlignment:
+                        CrossAxisAlignment.start,
                     children: [
                       Expanded(
                         child: Text(prod.nombre,
@@ -641,12 +765,26 @@ class _PublicarProductoScreenState
                                   color: _C.success,
                                 )),
                           ),
-                          Text('${_fmt(prod.stock)} ${prod.unidadMedida}',
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: sinStock
+                                  ? _C.danger.withOpacity(.10)
+                                  : _C.success.withOpacity(.10),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              '${_fmt(prod.stock)} ${prod.unidadMedida}',
                               style: TextStyle(
-                                fontSize: 10,
+                                fontSize: 9.5,
                                 fontWeight: FontWeight.w800,
-                                color: p.textMuted,
-                              )),
+                                color: sinStock
+                                    ? _C.danger
+                                    : _C.success,
+                              ),
+                            ),
+                          ),
                         ],
                       ),
                     ],
@@ -660,7 +798,15 @@ class _PublicarProductoScreenState
     );
   }
 
-  Widget _bottomBar(_P p) {
+  Widget _bottomBar(_P p, AppProvider provider) {
+    double totalEstimado = 0;
+    for (final id in _seleccionados) {
+      final prod = provider.getProductoById(id);
+      if (prod != null) {
+        totalEstimado += prod.precioVenta * (prod.stock > 0 ? 1 : 0);
+      }
+    }
+
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       decoration: BoxDecoration(
@@ -669,8 +815,8 @@ class _PublicarProductoScreenState
         boxShadow: [
           BoxShadow(
             color: Colors.black.withOpacity(.08),
-            blurRadius: 18,
-            offset: const Offset(0, -4),
+            blurRadius: 22,
+            offset: const Offset(0, -6),
           ),
         ],
       ),
@@ -683,21 +829,43 @@ class _PublicarProductoScreenState
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text('SELECCIONADOS',
-                      style: TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
-                        color: p.textMuted,
-                      )),
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _C.primary.withOpacity(.14),
+                          borderRadius: BorderRadius.circular(7),
+                        ),
+                        child: Text(
+                          '${_seleccionados.length}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: _C.primary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text('productos',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: p.textMuted,
+                          )),
+                    ],
+                  ),
                   const SizedBox(height: 2),
-                  Text('${_seleccionados.length}',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: -0.8,
-                        color: p.textHigh,
-                      )),
+                  Text(
+                    '≈ \$${totalEstimado.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.4,
+                      color: p.textHigh,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -708,18 +876,23 @@ class _PublicarProductoScreenState
                 onPressed: _guardando ? null : _publicar,
                 icon: _guardando
                     ? const SizedBox(
-                        width: 18, height: 18,
+                        width: 18,
+                        height: 18,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2.2, color: Colors.white,
+                          strokeWidth: 2.2,
+                          color: Colors.white,
                         ),
                       )
-                    : const Icon(Icons.cloud_upload_rounded, size: 18),
-                label: Text(_guardando ? 'Publicando…' : 'Publicar',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.3,
-                    )),
+                    : const Icon(Icons.cloud_upload_rounded,
+                        size: 18),
+                label: Text(
+                  _guardando ? 'Publicando…' : 'Publicar',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.3,
+                  ),
+                ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: _C.primary,
                   foregroundColor: Colors.white,
@@ -728,8 +901,8 @@ class _PublicarProductoScreenState
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 22),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 24),
                   elevation: 0,
                 ),
               ),
@@ -748,24 +921,25 @@ class _PublicarProductoScreenState
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 80, height: 80,
+              width: 84,
+              height: 84,
               decoration: BoxDecoration(
                 gradient: LinearGradient(colors: [
-                  _C.primary.withOpacity(.16),
+                  _C.primary.withOpacity(.20),
                   _C.cyan.withOpacity(.06),
                 ]),
                 shape: BoxShape.circle,
               ),
               child: const Icon(Icons.check_circle_rounded,
-                  size: 38, color: _C.primary),
+                  size: 42, color: _C.primary),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 18),
             Text(
               noDisponibles
                   ? 'Todo tu inventario está publicado'
                   : 'Sin resultados',
               style: TextStyle(
-                fontSize: 15,
+                fontSize: 15.5,
                 fontWeight: FontWeight.w900,
                 color: p.textHigh,
               ),
@@ -774,7 +948,7 @@ class _PublicarProductoScreenState
             Text(
               noDisponibles
                   ? 'Todos los productos de tu inventario ya están visibles en tu tienda.'
-                  : 'Prueba con otra búsqueda.',
+                  : 'Prueba con otra búsqueda o categoría.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12.5, color: p.textMuted),
             ),
@@ -787,17 +961,5 @@ class _PublicarProductoScreenState
   String _fmt(double n) {
     if (n == n.roundToDouble()) return n.toInt().toString();
     return n.toStringAsFixed(1);
-  }
-
-  Widget _orb(double size, Color color) {
-    return Container(
-      width: size, height: size,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: RadialGradient(
-          colors: [color, color.withOpacity(0)],
-        ),
-      ),
-    );
   }
 }
